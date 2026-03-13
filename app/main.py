@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import random
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -15,6 +16,8 @@ from app.services.trust_engine import (
     compute_risk_level,
     recover_trust_score,
 )
+
+  
 
 logging.basicConfig(
     level=logging.INFO,
@@ -160,9 +163,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+       allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
