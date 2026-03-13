@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Cyber Canvas",
+  title: "Sentinel",
   description: "Visual cybersecurity monitoring canvas",
 };
 
@@ -25,7 +25,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased min-h-dvh overflow-hidden`}
+        className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased min-h-dvh`}
       >
         {children}
       </body>

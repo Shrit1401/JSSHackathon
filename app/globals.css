@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap');
+
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -48,8 +50,8 @@
 }
 
 :root {
-  --font-sans: "Calibri", system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", sans-serif;
+  --font-sans: var(--font-geist-sans), system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -85,8 +87,8 @@
 }
 
 .dark {
-  --font-sans: "Calibri", system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", sans-serif;
+  --font-sans: var(--font-geist-sans), system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -172,3 +174,82 @@
     filter: drop-shadow(0 0 10px oklch(0.7 0.2 200 / 0.35));
   }
 }
+
+body { 
+  font-family: "DM Sans", sans-serif;
+}
+
+.lp-ambient {
+  background:
+    radial-gradient(circle at 8% 14%, rgba(222, 255, 205, 0.2), transparent 38%),
+    radial-gradient(circle at 82% 18%, rgba(186, 231, 255, 0.16), transparent 42%),
+    radial-gradient(circle at 50% 88%, rgba(255, 220, 186, 0.15), transparent 38%),
+    linear-gradient(160deg, #06070b 0%, #0a0f16 42%, #050507 100%);
+  background-size: 130% 130%, 120% 120%, 130% 130%, 100% 100%;
+  animation: lpAmbientShift 16s ease-in-out infinite alternate;
+}
+
+.lp-orbit {
+  opacity: 0.55;
+  filter: blur(44px);
+  transform-origin: 50% 50%;
+  background:
+    radial-gradient(circle at 30% 28%, rgba(168, 255, 185, 0.22), transparent 40%),
+    radial-gradient(circle at 72% 64%, rgba(142, 226, 255, 0.2), transparent 40%),
+    radial-gradient(circle at 42% 76%, rgba(255, 206, 152, 0.14), transparent 42%);
+  animation: lpOrbitSpin 30s linear infinite;
+}
+
+.lp-grain {
+  opacity: 0.18;
+  background-image:
+    radial-gradient(rgba(255, 255, 255, 0.15) 0.6px, transparent 0.6px);
+  background-size: 2px 2px;
+  mix-blend-mode: soft-light;
+}
+
+.lp-reveal {
+  opacity: 0;
+  transform: translateY(20px);
+  animation: lpReveal 850ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes lpAmbientShift {
+  0% { background-position: 0% 0%, 0% 0%, 0% 0%, 0% 0%; }
+  50% { background-position: 5% 8%, -4% 6%, 3% -5%, 0% 0%; }
+  100% { background-position: -3% 4%, 6% -3%, -5% 8%, 0% 0%; }
+}
+
+@keyframes lpOrbitSpin {
+  0% { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(180deg) scale(1.05); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+
+@keyframes lpReveal {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.confidence-ring {
+  display: grid;
+  place-items: center;
+  width: 150px;
+  height: 150px;
+  margin-inline: auto;
+  border-radius: 9999px;
+  padding: 10px;
+}
+
+.confidence-core {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 9999px;
+  background: rgba(8, 10, 14, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
