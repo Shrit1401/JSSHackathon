@@ -1,8 +1,6 @@
 import asyncio
 import logging
 import random
-import ssl
-import certifi
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -14,10 +12,8 @@ from app.database.supabase_client import supabase
 from app.routers import alerts, devices, events, simulation
 from app.services.trust_engine import (
     SEED_DEVICES,
-    adjust_trust_score,
-    build_alert_payload,
     compute_risk_level,
-    should_create_alert,
+    recover_trust_score,
 )
 
 logging.basicConfig(
@@ -25,8 +21,6 @@ logging.basicConfig(
     format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
 )
 logger = logging.getLogger("iot_monitor")
-
-ATTACK_TYPES = ["TRAFFIC_SPIKE", "POLICY_VIOLATION", "NEW_DESTINATION", "BACKDOOR", "DATA_EXFILTRATION"]
 
 
 # ---------------------------------------------------------------------------
@@ -67,49 +61,58 @@ async def run_simulation_tick() -> None:
         return
 
     device = random.choice(devices_list)
-    event_type = random.choice(ATTACK_TYPES)
     old_trust = device["trust_score"]
-    new_trust = adjust_trust_score(old_trust, event_type)
-    new_risk = compute_risk_level(new_trust)
-    new_traffic = max(0.0, round(device["traffic_rate"] + random.uniform(-2.0, 5.0), 2))
     now = datetime.now(timezone.utc).isoformat()
 
-    await asyncio.to_thread(
-        lambda: supabase.table("devices")
-        .update({
-            "trust_score": new_trust,
-            "risk_level": new_risk,
-            "traffic_rate": new_traffic,
-            "last_seen": now,
-        })
-        .eq("id", device["id"])
-        .execute()
-    )
-
-    await asyncio.to_thread(
-        lambda: supabase.table("events")
-        .insert({
-            "device_id": device["id"],
-            "event_type": event_type,
-            "description": f"[Auto] {event_type} detected on {device['name']}",
-            "timestamp": now,
-        })
-        .execute()
-    )
-
-    if should_create_alert(event_type, new_trust, old_trust):
-        payload = build_alert_payload(device, event_type, new_trust)
+    roll = random.random()
+    if roll < 0.85:
+        # Normal: small traffic fluctuation + gentle trust recovery
+        new_trust = recover_trust_score(old_trust)
+        new_traffic = max(0.0, round(device["traffic_rate"] + random.uniform(-2.0, 2.0), 2))
         await asyncio.to_thread(
-            lambda: supabase.table("alerts").insert(payload).execute()
+            lambda: supabase.table("devices")
+            .update({
+                "trust_score": new_trust,
+                "risk_level": compute_risk_level(new_trust),
+                "traffic_rate": new_traffic,
+                "last_seen": now,
+            })
+            .eq("id", device["id"])
+            .execute()
         )
-        logger.info(
-            "ALERT  device=%-20s  event=%-20s  trust=%d→%d  risk=%s",
-            device["name"], event_type, old_trust, new_trust, new_risk,
+        logger.debug(
+            "tick   device=%-20s  trust=%d→%d  (normal)",
+            device["name"], old_trust, new_trust,
         )
     else:
+        # Minor anomaly: small trust dip, no alert
+        delta = random.randint(-5, -1)
+        new_trust = max(0, min(100, old_trust + delta))
+        new_traffic = max(0.0, round(device["traffic_rate"] + random.uniform(-1.0, 3.0), 2))
+        await asyncio.to_thread(
+            lambda: supabase.table("devices")
+            .update({
+                "trust_score": new_trust,
+                "risk_level": compute_risk_level(new_trust),
+                "traffic_rate": new_traffic,
+                "last_seen": now,
+            })
+            .eq("id", device["id"])
+            .execute()
+        )
+        await asyncio.to_thread(
+            lambda: supabase.table("events")
+            .insert({
+                "device_id": device["id"],
+                "event_type": "TRAFFIC_FLUCTUATION",
+                "description": f"[Auto] Minor traffic fluctuation on {device['name']}",
+                "timestamp": now,
+            })
+            .execute()
+        )
         logger.debug(
-            "tick   device=%-20s  event=%-20s  trust=%d→%d",
-            device["name"], event_type, old_trust, new_trust,
+            "tick   device=%-20s  trust=%d→%d  (minor anomaly)",
+            device["name"], old_trust, new_trust,
         )
 
 

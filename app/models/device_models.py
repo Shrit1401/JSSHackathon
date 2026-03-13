@@ -11,7 +11,7 @@ class DeviceSummary(BaseModel):
     ip_address: str
     vendor: str
     trust_score: int
-    risk_level: Literal["SAFE", "LOW", "MEDIUM", "HIGH"]
+    risk_level: Literal["SAFE", "LOW", "MEDIUM", "HIGH", "COMPROMISED"]
     traffic_rate: float
     status: str
     last_seen: str
@@ -26,7 +26,7 @@ class DeviceDetail(BaseModel):
     ip_address: str
     vendor: str
     trust_score: int
-    risk_level: Literal["SAFE", "LOW", "MEDIUM", "HIGH"]
+    risk_level: Literal["SAFE", "LOW", "MEDIUM", "HIGH", "COMPROMISED"]
     traffic_rate: float
     status: str
     last_seen: str
@@ -76,7 +76,7 @@ class NetworkNode(BaseModel):
     id: str
     name: str
     device_type: str
-    risk_level: Literal["SAFE", "LOW", "MEDIUM", "HIGH"]
+    risk_level: Literal["SAFE", "LOW", "MEDIUM", "HIGH", "COMPROMISED"]
     trust_score: int
     status: str
 
@@ -114,7 +114,7 @@ class AddDeviceResponse(BaseModel):
     ip_address: str
     vendor: str
     trust_score: int
-    risk_level: Literal["SAFE", "LOW", "MEDIUM", "HIGH"]
+    risk_level: Literal["SAFE", "LOW", "MEDIUM", "HIGH", "COMPROMISED"]
     traffic_rate: float
     status: str
     last_seen: str
@@ -140,6 +140,6 @@ class SimulateAttackResponse(BaseModel):
 class ExplainResponse(BaseModel):
     device_id: str
     device_name: str
-    risk_level: Literal["SAFE", "LOW", "MEDIUM", "HIGH"]
+    risk_level: Literal["SAFE", "LOW", "MEDIUM", "HIGH", "COMPROMISED"]
     trust_score: int
     explanation: str

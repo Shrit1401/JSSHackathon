@@ -9,6 +9,7 @@ from app.database.supabase_client import supabase
 from app.models.device_models import SimulateAttackRequest, SimulateAttackResponse
 from app.services.trust_engine import (
     adjust_trust_score,
+    apply_attack_penalty,
     build_alert_payload,
     compute_risk_level,
     should_create_alert,
@@ -62,7 +63,7 @@ async def simulate_attack(body: SimulateAttackRequest):
     # ── compute new state ─────────────────────────────────────────────────────
     old_trust = device["trust_score"]
     old_risk = device["risk_level"]
-    new_trust = adjust_trust_score(old_trust, attack_type)
+    new_trust = apply_attack_penalty(old_trust)
     new_risk = compute_risk_level(new_trust)
     new_traffic = round(device["traffic_rate"] + random.uniform(5.0, 15.0), 2)
     now = datetime.now(timezone.utc).isoformat()
@@ -290,3 +291,39 @@ async def simulate_data_exfiltration(body: SimulateAttackRequest):
         event_description="Sustained data exfiltration stream detected — sensitive data may be leaving network",
         status_detail="Sustained exfiltration traffic detected.",
     )
+
+
+# ---------------------------------------------------------------------------
+# Network reset
+# ---------------------------------------------------------------------------
+
+@router.post("/reset-network", summary="Reset all devices to healthy state")
+async def reset_network():
+    try:
+        result = await asyncio.to_thread(
+            lambda: supabase.table("devices").select("id").execute()
+        )
+    except Exception as exc:
+        logger.exception("POST /reset-network — DB fetch error")
+        raise HTTPException(status_code=502, detail="Database error") from exc
+
+    device_ids = [row["id"] for row in (result.data or [])]
+    now = datetime.now(timezone.utc).isoformat()
+    updated = 0
+    for device_id in device_ids:
+        new_trust = random.randint(85, 95)
+        try:
+            await asyncio.to_thread(
+                lambda did=device_id, t=new_trust: supabase.table("devices").update({
+                    "trust_score": t,
+                    "risk_level": "SAFE",
+                    "status": "online",
+                    "last_seen": now,
+                }).eq("id", did).execute()
+            )
+            updated += 1
+        except Exception:
+            logger.exception("POST /reset-network — failed to reset device %s", device_id)
+
+    logger.info("reset-network  reset %d devices to healthy state", updated)
+    return {"message": f"Reset {updated} devices to healthy state.", "devices_reset": updated}

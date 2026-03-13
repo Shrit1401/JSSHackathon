@@ -14,7 +14,7 @@ def compute_risk_level(score: int) -> str:
     elif score >= 40:
         return "MEDIUM"
     else:
-        return "HIGH"
+        return "COMPROMISED"
 
 
 # ---------------------------------------------------------------------------
@@ -36,6 +36,23 @@ def adjust_trust_score(current: int, event_type: str) -> int:
     low, high = EVENT_PENALTIES[event_type]
     delta = random.randint(low, high)
     return max(0, min(100, current + delta))
+
+
+def apply_attack_penalty(current: int) -> int:
+    """Strong penalty for simulate-attack: drops 40-60 points."""
+    delta = random.randint(-60, -40)
+    return max(0, min(100, current + delta))
+
+
+NORMAL_EVENT_TYPES = ["ROUTINE_SCAN", "HEARTBEAT", "CONFIG_SYNC", "TRAFFIC_FLUCTUATION"]
+
+
+def recover_trust_score(current: int) -> int:
+    """Slowly recover trust toward 90 if not at max."""
+    if current >= 90:
+        return current
+    delta = random.randint(1, 3)
+    return min(100, current + delta)
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +83,7 @@ def generate_security_explanation(device: dict) -> str:
             f"Traffic rate elevated at {rate:.1f} MB/s. "
             "Recommend reviewing recent events and considering network isolation."
         )
-    else:  # HIGH
+    else:  # COMPROMISED
         return (
             f"CRITICAL: {name} has a trust score of {score}/100, signaling a likely compromise. "
             f"Traffic rate is {rate:.1f} MB/s — significantly above baseline. "
@@ -195,8 +212,8 @@ SEED_DEVICES: list[dict] = [
         "device_type": "camera",
         "ip_address": "192.168.1.42",
         "vendor": "Hikvision",
-        "trust_score": 72,
-        "risk_level": "LOW",
+        "trust_score": 90,
+        "risk_level": "SAFE",
         "traffic_rate": 8.1,
         "status": "online",
     },
@@ -215,9 +232,9 @@ SEED_DEVICES: list[dict] = [
         "device_type": "smart_tv",
         "ip_address": "192.168.1.78",
         "vendor": "Samsung",
-        "trust_score": 55,
-        "risk_level": "MEDIUM",
-        "traffic_rate": 15.7,
+        "trust_score": 87,
+        "risk_level": "SAFE",
+        "traffic_rate": 5.7,
         "status": "online",
     },
     {
@@ -225,7 +242,7 @@ SEED_DEVICES: list[dict] = [
         "device_type": "laptop",
         "ip_address": "192.168.1.101",
         "vendor": "Dell",
-        "trust_score": 82,
+        "trust_score": 92,
         "risk_level": "SAFE",
         "traffic_rate": 6.2,
         "status": "online",
@@ -235,9 +252,9 @@ SEED_DEVICES: list[dict] = [
         "device_type": "printer",
         "ip_address": "192.168.1.110",
         "vendor": "HP",
-        "trust_score": 35,
-        "risk_level": "HIGH",
-        "traffic_rate": 22.9,
+        "trust_score": 86,
+        "risk_level": "SAFE",
+        "traffic_rate": 2.9,
         "status": "online",
     },
     {
@@ -255,8 +272,8 @@ SEED_DEVICES: list[dict] = [
         "device_type": "hub",
         "ip_address": "192.168.1.150",
         "vendor": "SmartThings",
-        "trust_score": 63,
-        "risk_level": "LOW",
+        "trust_score": 89,
+        "risk_level": "SAFE",
         "traffic_rate": 4.5,
         "status": "online",
     },
@@ -265,9 +282,9 @@ SEED_DEVICES: list[dict] = [
         "device_type": "camera",
         "ip_address": "192.168.1.160",
         "vendor": "Dahua",
-        "trust_score": 28,
-        "risk_level": "HIGH",
-        "traffic_rate": 31.2,
+        "trust_score": 93,
+        "risk_level": "SAFE",
+        "traffic_rate": 7.2,
         "status": "online",
     },
     {
@@ -275,8 +292,8 @@ SEED_DEVICES: list[dict] = [
         "device_type": "smartphone",
         "ip_address": "192.168.1.200",
         "vendor": "Apple",
-        "trust_score": 78,
-        "risk_level": "LOW",
+        "trust_score": 85,
+        "risk_level": "SAFE",
         "traffic_rate": 3.8,
         "status": "online",
     },
