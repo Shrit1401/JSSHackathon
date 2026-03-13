@@ -187,13 +187,25 @@ export function SecurityNode({
           <Handle type="source" id="bottom" position={Position.Bottom} className="!size-1 !border-0 !bg-transparent" />
           <Handle type="source" id="bottom-left" position={Position.Bottom} className="!size-1 !border-0 !bg-transparent" style={{ left: "25%" }} />
           <Handle type="source" id="left" position={Position.Left} className="!size-1 !border-0 !bg-transparent" />
+          <Handle type="source" id="source-top" position={Position.Top} className="!size-1 !border-0 !bg-transparent" style={{ left: "50%" }} />
+          <Handle type="source" id="source-right" position={Position.Right} className="!size-1 !border-0 !bg-transparent" />
+          <Handle type="source" id="source-bottom" position={Position.Bottom} className="!size-1 !border-0 !bg-transparent" style={{ left: "50%" }} />
+          <Handle type="source" id="source-left" position={Position.Left} className="!size-1 !border-0 !bg-transparent" />
           <Handle type="target" id="target-top" position={Position.Top} className="!size-1 !border-0 !bg-transparent" style={{ left: "50%" }} />
           <Handle type="target" id="target-right" position={Position.Right} className="!size-1 !border-0 !bg-transparent" />
+          <Handle type="target" id="target-left" position={Position.Left} className="!size-1 !border-0 !bg-transparent" />
+          <Handle type="target" id="target-bottom" position={Position.Bottom} className="!size-1 !border-0 !bg-transparent" style={{ left: "50%" }} />
         </>
       ) : (
         <>
-          <Handle type="target" position={Position.Left} className="!size-1.5 !border-0 !bg-cyan-300/25" />
-          <Handle type="source" position={Position.Right} className="!size-1.5 !border-0 !bg-cyan-300/25" />
+          <Handle type="target" id="target-top" position={Position.Top} className="!size-1 !border-0 !bg-transparent" />
+          <Handle type="target" id="target-left" position={Position.Left} className="!size-1 !border-0 !bg-transparent" />
+          <Handle type="target" id="target-bottom" position={Position.Bottom} className="!size-1 !border-0 !bg-transparent" />
+          <Handle type="target" id="target-right" position={Position.Right} className="!size-1 !border-0 !bg-transparent" />
+          <Handle type="source" id="source-top" position={Position.Top} className="!size-1 !border-0 !bg-transparent" />
+          <Handle type="source" id="source-right" position={Position.Right} className="!size-1 !border-0 !bg-transparent" />
+          <Handle type="source" id="source-bottom" position={Position.Bottom} className="!size-1 !border-0 !bg-transparent" />
+          <Handle type="source" id="source-left" position={Position.Left} className="!size-1 !border-0 !bg-transparent" />
         </>
       )}
 

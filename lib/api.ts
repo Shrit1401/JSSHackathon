@@ -1,5 +1,6 @@
 import type {
   AddDeviceRequest,
+  AddDeviceResponse,
   AlertOut,
   DeviceDetail,
   DeviceSummary,
@@ -7,6 +8,7 @@ import type {
   ExplainResponse,
   NetworkMap,
   OverviewStats,
+  ResetNetworkResponse,
   SimulateAttackRequest,
   SimulateAttackResponse,
 } from "./api-types"
@@ -38,7 +40,7 @@ export const api = {
   explain: (id: string) => request<ExplainResponse>(`/devices/${id}/explain`),
 
   addDevice: (body: AddDeviceRequest) =>
-    request<DeviceSummary>("/devices", {
+    request<AddDeviceResponse>("/devices", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -55,10 +57,10 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  simulateBackdoor: (deviceId: string) =>
+  simulateBackdoor: (deviceId: string, stealthLevel: "low" | "medium" | "high" = "medium") =>
     request<SimulateAttackResponse>("/simulate/backdoor", {
       method: "POST",
-      body: JSON.stringify({ device_id: deviceId, attack_type: "BACKDOOR" }),
+      body: JSON.stringify({ device_id: deviceId, attack_type: "BACKDOOR", stealth_level: stealthLevel }),
     }),
 
   simulateTrafficSpike: (deviceId: string) =>
@@ -77,5 +79,10 @@ export const api = {
         device_id: deviceId,
         attack_type: "DATA_EXFILTRATION",
       }),
+    }),
+
+  resetNetwork: () =>
+    request<ResetNetworkResponse>("/reset-network", {
+      method: "POST",
     }),
 }

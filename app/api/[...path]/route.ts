@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 
 const BACKEND_URL =
   process.env.BACKEND_URL ??
-  "https://bf52-2401-4900-c9a1-6649-2817-3cba-d53c-924.ngrok-free.app"
+  "https://jsshackathon.onrender.com"
 
 async function proxy(
   req: NextRequest,

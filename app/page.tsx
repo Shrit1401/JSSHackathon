@@ -7,11 +7,12 @@ import ReactFlow, {
   ReactFlowProvider,
   useEdgesState,
   useNodesState,
+  useReactFlow,
   type Edge,
   type Node,
 } from "reactflow"
 import { AnimatePresence, motion } from "framer-motion"
-import { Check, ChevronDown, Database, Plus, Shield, Wifi, X } from "lucide-react"
+import { Check, ChevronDown, Database, Plus, RotateCcw, Shield, Wifi, X } from "lucide-react"
 import {
   Line,
   LineChart,
@@ -22,6 +23,7 @@ import {
 } from "recharts"
 
 import "reactflow/dist/style.css"
+import dagre from "@dagrejs/dagre"
 
 import { SecurityNode } from "@/components/canvas/SecurityNode"
 import type {
@@ -112,6 +114,7 @@ function mkNodeData(
 function mapRiskLevel(r: RiskLevelAPI): RiskLevel {
   if (r === "SAFE" || r === "LOW") return "safe"
   if (r === "MEDIUM") return "suspicious"
+  if (r === "HIGH" || r === "COMPROMISED") return "compromised"
   return "compromised"
 }
 
@@ -147,6 +150,163 @@ const HANDLE_NAMES = [
   "right",
   "top-right",
 ]
+
+type LayoutMode = "radial" | "vertical" | "horizontal"
+
+const DAGRE_NODE_HEIGHT = 90
+
+function computeSmartHandles(
+  nodes: Node<DeviceNodeData>[],
+  edges: Edge<TrafficEdgeData>[]
+): Edge<TrafficEdgeData>[] {
+  const posMap = new Map(nodes.map((n) => [n.id, n.position]))
+  const hubIds = new Set(nodes.filter((n) => n.data.isHub).map((n) => n.id))
+
+  return edges.map((edge) => {
+    const sp = posMap.get(edge.source)
+    const tp = posMap.get(edge.target)
+    if (!sp || !tp) return edge
+
+    const dx = tp.x - sp.x
+    const dy = tp.y - sp.y
+
+    let sourceHandle: string
+    let targetHandle: string
+
+    if (hubIds.has(edge.source)) {
+      const angle = Math.atan2(dy, dx) * (180 / Math.PI)
+      if (angle >= -22.5 && angle < 22.5) sourceHandle = "right"
+      else if (angle >= 22.5 && angle < 67.5) sourceHandle = "bottom-right"
+      else if (angle >= 67.5 && angle < 112.5) sourceHandle = "bottom"
+      else if (angle >= 112.5 && angle < 157.5) sourceHandle = "bottom-left"
+      else if (angle >= 157.5 || angle < -157.5) sourceHandle = "left"
+      else if (angle >= -157.5 && angle < -112.5) sourceHandle = "top-left"
+      else if (angle >= -112.5 && angle < -67.5) sourceHandle = "top"
+      else sourceHandle = "top-right"
+    } else {
+      if (Math.abs(dx) >= Math.abs(dy)) {
+        sourceHandle = dx >= 0 ? "source-right" : "source-left"
+      } else {
+        sourceHandle = dy >= 0 ? "source-bottom" : "source-top"
+      }
+    }
+
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      targetHandle = dx >= 0 ? "target-left" : "target-right"
+    } else {
+      targetHandle = dy >= 0 ? "target-top" : "target-bottom"
+    }
+
+    return {
+      ...edge,
+      sourceHandle,
+      targetHandle,
+      data: edge.data
+        ? { ...edge.data, pathType: undefined }
+        : edge.data,
+    }
+  })
+}
+
+function applyDagreLayout(
+  inputNodes: Node<DeviceNodeData>[],
+  inputEdges: Edge<TrafficEdgeData>[],
+  direction: "TB" | "LR"
+): { nodes: Node<DeviceNodeData>[]; edges: Edge<TrafficEdgeData>[] } {
+  const g = new dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}))
+  g.setGraph({ rankdir: direction, nodesep: 80, ranksep: 140 })
+
+  const nodeWidths = new Map<string, number>()
+  inputNodes.forEach((node) => {
+    const w = node.data.isHub ? 260 : 230
+    nodeWidths.set(node.id, w)
+    g.setNode(node.id, { width: w, height: DAGRE_NODE_HEIGHT })
+  })
+
+  inputEdges.forEach((edge) => {
+    g.setEdge(edge.source, edge.target)
+  })
+
+  dagre.layout(g)
+
+  const nodes = inputNodes.map((node) => {
+    const pos = g.node(node.id)
+    const w = nodeWidths.get(node.id) ?? 230
+    return {
+      ...node,
+      position: {
+        x: pos.x - w / 2,
+        y: pos.y - DAGRE_NODE_HEIGHT / 2,
+      },
+    }
+  })
+
+  const smartEdges = computeSmartHandles(nodes, inputEdges)
+  const edges = smartEdges.map((edge) => ({
+    ...edge,
+    data: {
+      ...(edge.data ?? { status: "normal" as const, speed: 2.5 }),
+      pathType: "smoothstep" as const,
+    },
+  }))
+
+  return { nodes, edges }
+}
+
+function applyRadialLayout(
+  inputNodes: Node<DeviceNodeData>[],
+  inputEdges: Edge<TrafficEdgeData>[]
+): { nodes: Node<DeviceNodeData>[]; edges: Edge<TrafficEdgeData>[] } {
+  const gatewayNode = inputNodes.find((n) => n.data.isHub)
+  const gatewayId = gatewayNode?.id
+
+  const childrenOf = new Map<string, string[]>()
+  for (const edge of inputEdges) {
+    if (!childrenOf.has(edge.source)) childrenOf.set(edge.source, [])
+    childrenOf.get(edge.source)!.push(edge.target)
+  }
+
+  const positions = new Map<string, { x: number; y: number }>()
+  if (gatewayId) {
+    positions.set(gatewayId, { x: 0, y: 0 })
+    const level1 = childrenOf.get(gatewayId) ?? []
+    const radius = 420
+    const angleStep = (2 * Math.PI) / Math.max(level1.length, 1)
+    const startAngle = -Math.PI / 2
+    level1.forEach((childId, i) => {
+      const angle = startAngle + i * angleStep
+      positions.set(childId, {
+        x: Math.round(radius * Math.cos(angle)),
+        y: Math.round(radius * Math.sin(angle)),
+      })
+      const level2 = childrenOf.get(childId) ?? []
+      level2.forEach((gcId, j) => {
+        const parentPos = positions.get(childId)!
+        positions.set(gcId, {
+          x: parentPos.x,
+          y: parentPos.y + 140 * (j + 1),
+        })
+      })
+    })
+  }
+
+  let fallbackX = -600
+  inputNodes.forEach((n) => {
+    if (!positions.has(n.id)) {
+      positions.set(n.id, { x: fallbackX, y: 400 })
+      fallbackX += 280
+    }
+  })
+
+  const nodes = inputNodes.map((n) => ({
+    ...n,
+    position: positions.get(n.id) ?? n.position,
+  }))
+
+  const edges = computeSmartHandles(nodes, inputEdges)
+
+  return { nodes, edges }
+}
 
 function buildFlowFromAPI(
   networkMap: NetworkMap,
@@ -231,28 +391,15 @@ function buildFlowFromAPI(
     }
   })
 
-  const level1Children = childrenOf.get(gatewayId ?? "") ?? []
+  const rawEdges: Edge<TrafficEdgeData>[] = networkMap.edges.map((apiEdge) => ({
+    id: `e-${apiEdge.source}-${apiEdge.target}`,
+    source: apiEdge.source,
+    target: apiEdge.target,
+    type: "traffic" as const,
+    data: { status: "normal" as const, speed: 2.5 },
+  }))
 
-  const flowEdges: Edge<TrafficEdgeData>[] = networkMap.edges.map((apiEdge) => {
-    const isFromGateway = apiEdge.source === gatewayId
-    const childIdx = isFromGateway
-      ? level1Children.indexOf(apiEdge.target)
-      : -1
-    const sourceHandle =
-      isFromGateway && childIdx >= 0
-        ? HANDLE_NAMES[childIdx % HANDLE_NAMES.length]
-        : undefined
-    return {
-      id: `e-${apiEdge.source}-${apiEdge.target}`,
-      source: apiEdge.source,
-      target: apiEdge.target,
-      type: "traffic" as const,
-      ...(sourceHandle ? { sourceHandle } : {}),
-      data: { status: "normal" as const, speed: 2.5 },
-    }
-  })
-
-  return { nodes: flowNodes, edges: flowEdges }
+  return { nodes: flowNodes, edges: computeSmartHandles(flowNodes, rawEdges) }
 }
 
 function mapAlertFromAPI(a: {
@@ -411,34 +558,23 @@ const initialNodes: Node<DeviceNodeData>[] = [
 ]
 
 const initialEdges: Edge<TrafficEdgeData>[] = [
-  // Router → primary ring
-  { id: "e-router-trust", source: "router", sourceHandle: "top-left", target: "trust", type: "traffic", data: { status: "normal", speed: 3.8 } },
-  { id: "e-router-cam", source: "router", sourceHandle: "left", target: "cam21", type: "traffic", data: { status: "normal", speed: 2.6 } },
-  { id: "e-router-laptop", source: "router", sourceHandle: "top-right", target: "laptop1", type: "traffic", data: { status: "normal", speed: 2.2 } },
-  { id: "e-router-alerts", source: "router", sourceHandle: "right", target: "alerts", type: "traffic", data: { status: "normal", speed: 4.2 } },
-  { id: "e-router-printer", source: "router", sourceHandle: "bottom-right", target: "printer3", type: "traffic", data: { status: "normal", speed: 2.8 } },
-  { id: "e-router-sensor", source: "router", sourceHandle: "bottom", target: "sensor", type: "traffic", data: { status: "normal", speed: 2.4 } },
-  { id: "e-router-tv", source: "router", sourceHandle: "bottom-left", target: "tv", type: "traffic", data: { status: "normal", speed: 3.2 } },
-
-  // SmartTV → children
-  { id: "e-tv-projector", source: "tv", target: "projector", type: "traffic", data: { status: "normal", speed: 3.0 } },
-  { id: "e-tv-soundbar", source: "tv", target: "soundbar", type: "traffic", data: { status: "normal", speed: 3.0 } },
-
-  // Camera_21 → children
-  { id: "e-cam-cam22", source: "cam21", target: "cam22", type: "traffic", data: { status: "normal", speed: 2.8 } },
-  { id: "e-cam-nvr", source: "cam21", target: "nvr", type: "traffic", data: { status: "normal", speed: 2.8 } },
-
-  // Laptop_1 → children
-  { id: "e-laptop-phone", source: "laptop1", target: "phone1", type: "traffic", data: { status: "normal", speed: 2.4 } },
-  { id: "e-laptop-tablet", source: "laptop1", target: "tablet1", type: "traffic", data: { status: "normal", speed: 2.4 } },
-
-  // Printer_3 → children
-  { id: "e-printer-scanner", source: "printer3", target: "scanner1", type: "traffic", data: { status: "normal", speed: 3.2 } },
-  { id: "e-printer-fax", source: "printer3", target: "fax1", type: "traffic", data: { status: "normal", speed: 3.2 } },
-
-  // IoT_Sensor → children
-  { id: "e-sensor-thermo", source: "sensor", target: "thermostat", type: "traffic", data: { status: "normal", speed: 2.6 } },
-  { id: "e-sensor-door", source: "sensor", target: "doorlock", type: "traffic", data: { status: "normal", speed: 2.6 } },
+  { id: "e-router-trust", source: "router", sourceHandle: "top-left", target: "trust", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 3.8 } },
+  { id: "e-router-cam", source: "router", sourceHandle: "left", target: "cam21", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 2.6 } },
+  { id: "e-router-laptop", source: "router", sourceHandle: "top-right", target: "laptop1", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 2.2 } },
+  { id: "e-router-alerts", source: "router", sourceHandle: "right", target: "alerts", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 4.2 } },
+  { id: "e-router-printer", source: "router", sourceHandle: "bottom-right", target: "printer3", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 2.8 } },
+  { id: "e-router-sensor", source: "router", sourceHandle: "bottom", target: "sensor", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 2.4 } },
+  { id: "e-router-tv", source: "router", sourceHandle: "bottom-left", target: "tv", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 3.2 } },
+  { id: "e-tv-projector", source: "tv", sourceHandle: "source-right", target: "projector", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 3.0 } },
+  { id: "e-tv-soundbar", source: "tv", sourceHandle: "source-right", target: "soundbar", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 3.0 } },
+  { id: "e-cam-cam22", source: "cam21", sourceHandle: "source-right", target: "cam22", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 2.8 } },
+  { id: "e-cam-nvr", source: "cam21", sourceHandle: "source-right", target: "nvr", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 2.8 } },
+  { id: "e-laptop-phone", source: "laptop1", sourceHandle: "source-right", target: "phone1", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 2.4 } },
+  { id: "e-laptop-tablet", source: "laptop1", sourceHandle: "source-right", target: "tablet1", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 2.4 } },
+  { id: "e-printer-scanner", source: "printer3", sourceHandle: "source-right", target: "scanner1", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 3.2 } },
+  { id: "e-printer-fax", source: "printer3", sourceHandle: "source-right", target: "fax1", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 3.2 } },
+  { id: "e-sensor-thermo", source: "sensor", sourceHandle: "source-right", target: "thermostat", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 2.6 } },
+  { id: "e-sensor-door", source: "sensor", sourceHandle: "source-right", target: "doorlock", targetHandle: "target-left", type: "traffic", data: { status: "normal", speed: 2.6 } },
 ]
 
 function computeTrustScore(nodes: Node<DeviceNodeData>[]) {
@@ -469,21 +605,30 @@ interface DeviceOption {
   name: string
 }
 
+interface MockDevicePayload {
+  name: string
+  deviceType: string
+  parentId: string
+}
+
 function AddDeviceModal({
   open,
   useMock,
+  existingDevices,
   onClose,
   onAdded,
 }: {
   open: boolean
   useMock: boolean
+  existingDevices: DeviceOption[]
   onClose: () => void
-  onAdded: () => void
+  onAdded: (mockDevice?: MockDevicePayload) => void
 }) {
   const [name, setName] = React.useState("")
   const [deviceType, setDeviceType] = React.useState("sensor")
   const [ip, setIp] = React.useState("")
   const [vendor, setVendor] = React.useState("")
+  const [parentId, setParentId] = React.useState("")
   const [submitting, setSubmitting] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
@@ -492,6 +637,7 @@ function AddDeviceModal({
     setDeviceType("sensor")
     setIp("")
     setVendor("")
+    setParentId("")
     setError(null)
   }
 
@@ -504,17 +650,27 @@ function AddDeviceModal({
     setSubmitting(true)
     setError(null)
     try {
-      if (!useMock) {
+      if (useMock) {
+        const payload: MockDevicePayload = {
+          name: name.trim(),
+          deviceType,
+          parentId: parentId || "router",
+        }
+        reset()
+        onAdded(payload)
+        onClose()
+      } else {
         await api.addDevice({
           name: name.trim(),
           device_type: deviceType,
           ip_address: ip.trim(),
           vendor: vendor.trim(),
+          ...(parentId ? { parent_id: parentId } : {}),
         })
+        reset()
+        onAdded()
+        onClose()
       }
-      reset()
-      onAdded()
-      onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add device")
     } finally {
@@ -601,6 +757,24 @@ function AddDeviceModal({
                 </select>
               </div>
 
+              <div>
+                <label className="mb-1 block text-xs text-zinc-400">
+                  Parent device
+                </label>
+                <select
+                  className={inputCn + " appearance-none"}
+                  value={parentId}
+                  onChange={(e) => setParentId(e.target.value)}
+                >
+                  <option value="" className="bg-zinc-900">Auto (based on type)</option>
+                  {existingDevices.map((d) => (
+                    <option key={d.id} value={d.id} className="bg-zinc-900">
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="mb-1 block text-xs text-zinc-400">
@@ -659,6 +833,8 @@ function AddDeviceModal({
   )
 }
 
+type StealthLevel = "low" | "medium" | "high"
+
 function TopToolbar({
   trustScore,
   alerts,
@@ -667,6 +843,8 @@ function TopToolbar({
   onToggleMock,
   onAddDevice,
   onSimulate,
+  onResetNetwork,
+  resetting,
 }: {
   trustScore: number
   alerts: AlertItem[]
@@ -674,12 +852,16 @@ function TopToolbar({
   useMock: boolean
   onToggleMock: () => void
   onAddDevice: () => void
-  onSimulate: (type: SimulationType, deviceId: string) => void
+  onSimulate: (type: SimulationType, deviceId: string, stealthLevel?: StealthLevel) => void
+  onResetNetwork: () => void
+  resetting: boolean
 }) {
   const trustRisk = riskFromTrust(trustScore)
   const [open, setOpen] = React.useState(false)
   const [deviceOpen, setDeviceOpen] = React.useState(false)
   const [selectedDevice, setSelectedDevice] = React.useState<string | null>(null)
+  const [stealthLevel, setStealthLevel] = React.useState<StealthLevel>("medium")
+  const [stealthOpen, setStealthOpen] = React.useState(false)
 
   const selectedName =
     devices.find((d) => d.id === selectedDevice)?.name ?? "Select device"
@@ -687,7 +869,7 @@ function TopToolbar({
   function fire(type: SimulationType) {
     if (!selectedDevice) return
     setOpen(false)
-    onSimulate(type, selectedDevice)
+    onSimulate(type, selectedDevice, type === "backdoor" ? stealthLevel : undefined)
   }
 
   return (
@@ -851,6 +1033,64 @@ function TopToolbar({
             </AnimatePresence>
           </div>
 
+          {/* ── Stealth level ── */}
+          <div className="relative">
+            <Button
+              size="sm"
+              variant="outline"
+              className={cn(
+                "border-white/10 bg-zinc-950/25 text-zinc-100 hover:bg-zinc-900/50",
+                !selectedDevice && "opacity-50"
+              )}
+              disabled={!selectedDevice}
+              onClick={() => {
+                setStealthOpen((v) => !v)
+                setOpen(false)
+                setDeviceOpen(false)
+              }}
+            >
+              <span className="capitalize">Stealth: {stealthLevel}</span>
+              <ChevronDown className="ml-1.5 size-3.5 text-zinc-300" />
+            </Button>
+            <AnimatePresence initial={false}>
+              {stealthOpen ? (
+                <motion.div
+                  initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                  transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                  className="absolute right-0 top-[calc(100%+6px)] w-36 rounded-xl border border-white/10 bg-zinc-950/80 p-1 shadow-[0_16px_50px_rgba(0,0,0,0.65)] backdrop-blur-md"
+                  style={{
+                    fontFamily:
+                      '"Calibri","Segoe UI",system-ui,-apple-system,sans-serif',
+                  }}
+                >
+                  {(["low", "medium", "high"] as StealthLevel[]).map((level) => (
+                    <button
+                      key={level}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm text-zinc-100 transition-colors hover:bg-white/5",
+                        stealthLevel === level && "bg-white/5"
+                      )}
+                      onClick={() => {
+                        setStealthLevel(level)
+                        setStealthOpen(false)
+                      }}
+                    >
+                      {stealthLevel === level && (
+                        <Check className="size-3.5 text-cyan-300" />
+                      )}
+                      <span className="capitalize">{level}</span>
+                      <span className="ml-auto text-[10px] text-zinc-500">
+                        {level === "low" ? "Easy detect" : level === "medium" ? "Moderate" : "Hard detect"}
+                      </span>
+                    </button>
+                  ))}
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+          </div>
+
           {/* ── Add device ── */}
           <Button
             size="sm"
@@ -860,6 +1100,18 @@ function TopToolbar({
           >
             <Plus className="mr-1 size-3.5" />
             Add
+          </Button>
+
+          {/* ── Reset network ── */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-white/10 bg-zinc-950/25 text-zinc-100 hover:bg-zinc-900/50 disabled:opacity-50"
+            disabled={resetting}
+            onClick={onResetNetwork}
+          >
+            <RotateCcw className={cn("mr-1 size-3.5", resetting && "animate-spin")} />
+            {resetting ? "Resetting…" : "Reset"}
           </Button>
 
           {/* ── Mock / Live toggle ── */}
@@ -978,6 +1230,20 @@ function DetailPanel({
                             {alerts.length}
                           </div>
                         </div>
+                        {match.detectionDifficulty != null && (
+                          <div>
+                            <div className="text-zinc-500">Detection difficulty</div>
+                            <div className={cn(
+                              "mt-0.5 text-sm font-semibold",
+                              match.detectionDifficulty >= 70 ? "text-emerald-300" : match.detectionDifficulty >= 40 ? "text-orange-300" : "text-red-300"
+                            )}>
+                              {match.detectionDifficulty}%
+                              <span className="ml-1 text-[10px] font-normal text-zinc-500">
+                                {match.detectionDifficulty >= 70 ? "Easy" : match.detectionDifficulty >= 40 ? "Moderate" : "Hard"}
+                              </span>
+                            </div>
+                          </div>
+                        )}
                       </div>
                       <div className="mt-3 text-[11px] text-zinc-500">
                         Indicators
@@ -1352,6 +1618,14 @@ function CanvasInner() {
   const [loading, setLoading] = React.useState(true)
   const [useMock, setUseMock] = React.useState(false)
   const [addDeviceOpen, setAddDeviceOpen] = React.useState(false)
+  const [resetting, setResetting] = React.useState(false)
+  const [layoutMode, setLayoutMode] = React.useState<LayoutMode>("radial")
+
+  const { fitView } = useReactFlow()
+  const nodesRef = React.useRef(nodes)
+  const edgesRef = React.useRef(edges)
+  nodesRef.current = nodes
+  edgesRef.current = edges
 
   const loadFromAPI = React.useCallback(async () => {
     try {
@@ -1377,17 +1651,55 @@ function CanvasInner() {
 
   const loadMock = React.useCallback(() => {
     setNodes(initialNodes)
-    setEdges(initialEdges)
+    setEdges(computeSmartHandles(initialNodes, initialEdges))
     setAlerts([])
   }, [setNodes, setEdges])
 
-  const refreshCanvas = React.useCallback(async () => {
-    if (useMock) {
-      loadMock()
-    } else {
-      await loadFromAPI()
-    }
-  }, [useMock, loadFromAPI, loadMock])
+  const addMockDevice = React.useCallback(
+    (payload: MockDevicePayload) => {
+      const id = uid("device")
+      const seed = hashCode(id)
+      const icon = mapIcon(payload.deviceType)
+      const trustScore = 60 + Math.floor(Math.random() * 30)
+      const newNode: Node<DeviceNodeData> = {
+        id,
+        type: "security",
+        position: { x: 0, y: 0 },
+        data: mkNodeData("device", payload.name, payload.deviceType, trustScore, icon, seed),
+      }
+      const newEdge: Edge<TrafficEdgeData> = {
+        id: `e-${payload.parentId}-${id}`,
+        source: payload.parentId,
+        target: id,
+        type: "traffic",
+        data: { status: "normal", speed: 2.5 },
+      }
+      setNodes((prev) => {
+        const next = [...prev, newNode]
+        const allEdges = [...edgesRef.current, newEdge]
+        const laid = applyRadialLayout(next, allEdges)
+        setEdges(laid.edges)
+        setTimeout(() => fitView({ padding: 0.22, duration: 300 }), 50)
+        return laid.nodes
+      })
+    },
+    [setNodes, setEdges, fitView]
+  )
+
+  const refreshCanvas = React.useCallback(
+    async (mockDevice?: MockDevicePayload) => {
+      if (mockDevice) {
+        addMockDevice(mockDevice)
+        return
+      }
+      if (useMock) {
+        loadMock()
+      } else {
+        await loadFromAPI()
+      }
+    },
+    [useMock, loadFromAPI, loadMock, addMockDevice]
+  )
 
   React.useEffect(() => {
     let cancelled = false
@@ -1539,7 +1851,7 @@ function CanvasInner() {
   )
 
   const simulate = React.useCallback(
-    async (type: SimulationType, deviceId: string) => {
+    async (type: SimulationType, deviceId: string, stealthLevel?: StealthLevel) => {
       const target = nodes.find((n) => n.id === deviceId)
       if (!target) return
 
@@ -1547,22 +1859,35 @@ function CanvasInner() {
       bumpPulse(target.id)
 
       if (useMock) {
-        const deltas: Record<SimulationType, { delta: number; sev: RiskLevel; title: string; desc: string; event: string }> = {
-          backdoor: { delta: -42, sev: "compromised", title: "Backdoor behavior pattern", desc: `${target.data.name} exhibited persistence + beaconing indicators.`, event: "Backdoor simulation: persistence indicators detected" },
-          traffic_spike: { delta: -18, sev: "suspicious", title: "Traffic anomaly detected", desc: `${target.data.name} burst traffic signature observed.`, event: "Traffic spike simulation: anomaly score increased" },
-          exfil: { delta: -36, sev: "compromised", title: "Possible data exfiltration", desc: `${target.data.name} shows high outbound volume to unknown host.`, event: "Exfiltration simulation: outbound risk elevated" },
-          malware: { delta: -28, sev: "suspicious", title: "Malware indicators", desc: `${target.data.name} triggered malicious process heuristics.`, event: "Malware simulation: behavior heuristic triggered" },
+        const stealthPenalties: Record<StealthLevel, number> = { low: 50, medium: 35, high: 20 }
+        const mockDetection: Record<StealthLevel, number> = { low: 85, medium: 50, high: 20 }
+        const sl = stealthLevel ?? "medium"
+        const basePenalty = type === "backdoor" ? stealthPenalties[sl] : Math.floor(Math.random() * 21) + 40
+        const penalty = -basePenalty
+        const deltas: Record<SimulationType, { title: string; desc: string; event: string }> = {
+          backdoor: { title: "Backdoor behavior pattern", desc: `${target.data.name} exhibited persistence + beaconing indicators (stealth: ${sl}).`, event: `Backdoor simulation (${sl} stealth): persistence indicators detected` },
+          traffic_spike: { title: "Traffic anomaly detected", desc: `${target.data.name} burst traffic signature observed.`, event: "Traffic spike simulation: anomaly score increased" },
+          exfil: { title: "Possible data exfiltration", desc: `${target.data.name} shows high outbound volume to unknown host.`, event: "Exfiltration simulation: outbound risk elevated" },
+          malware: { title: "Malware indicators", desc: `${target.data.name} triggered malicious process heuristics.`, event: "Malware simulation: behavior heuristic triggered" },
         }
         const d = deltas[type]
-        pushAlert({ title: d.title, description: d.desc, severity: d.sev, nodeId: target.id })
-        applyTrustDelta(target.id, d.delta, d.event)
+        const newTrust = clamp(target.data.trustScore + penalty, 0, 100)
+        const sev = riskFromTrust(newTrust)
+        pushAlert({
+          title: d.title,
+          description: d.desc,
+          severity: sev,
+          nodeId: target.id,
+          ...(type === "backdoor" ? { detectionDifficulty: mockDetection[sl] } : {}),
+        })
+        applyTrustDelta(target.id, penalty, d.event)
         return
       }
 
       try {
         let response
         if (type === "backdoor") {
-          response = await api.simulateBackdoor(target.id)
+          response = await api.simulateBackdoor(target.id, stealthLevel ?? "medium")
         } else if (type === "traffic_spike") {
           response = await api.simulateTrafficSpike(target.id)
         } else if (type === "exfil") {
@@ -1597,6 +1922,7 @@ function CanvasInner() {
           description: response.message,
           severity: mapRiskLevel(response.new_risk_level),
           nodeId: response.device_id,
+          ...(response.detection_difficulty != null ? { detectionDifficulty: response.detection_difficulty } : {}),
         })
 
         try {
@@ -1605,18 +1931,59 @@ function CanvasInner() {
         } catch {}
       } catch (err) {
         console.error("API simulation failed, falling back to local:", err)
-        const deltas: Record<SimulationType, { delta: number; sev: RiskLevel; title: string; desc: string; event: string }> = {
-          backdoor: { delta: -42, sev: "compromised", title: "Backdoor behavior pattern", desc: `${target.data.name} exhibited persistence + beaconing indicators.`, event: "Backdoor simulation: persistence indicators detected" },
-          traffic_spike: { delta: -18, sev: "suspicious", title: "Traffic anomaly detected", desc: `${target.data.name} burst traffic signature observed.`, event: "Traffic spike simulation: anomaly score increased" },
-          exfil: { delta: -36, sev: "compromised", title: "Possible data exfiltration", desc: `${target.data.name} shows high outbound volume to unknown host.`, event: "Exfiltration simulation: outbound risk elevated" },
-          malware: { delta: -28, sev: "suspicious", title: "Malware indicators", desc: `${target.data.name} triggered malicious process heuristics.`, event: "Malware simulation: behavior heuristic triggered" },
+        const penalty = -(Math.floor(Math.random() * 21) + 40)
+        const deltas: Record<SimulationType, { title: string; desc: string; event: string }> = {
+          backdoor: { title: "Backdoor behavior pattern", desc: `${target.data.name} exhibited persistence + beaconing indicators.`, event: "Backdoor simulation: persistence indicators detected" },
+          traffic_spike: { title: "Traffic anomaly detected", desc: `${target.data.name} burst traffic signature observed.`, event: "Traffic spike simulation: anomaly score increased" },
+          exfil: { title: "Possible data exfiltration", desc: `${target.data.name} shows high outbound volume to unknown host.`, event: "Exfiltration simulation: outbound risk elevated" },
+          malware: { title: "Malware indicators", desc: `${target.data.name} triggered malicious process heuristics.`, event: "Malware simulation: behavior heuristic triggered" },
         }
         const d = deltas[type]
-        pushAlert({ title: d.title, description: d.desc, severity: d.sev, nodeId: target.id })
-        applyTrustDelta(target.id, d.delta, d.event)
+        const newTrust = clamp(target.data.trustScore + penalty, 0, 100)
+        const sev = riskFromTrust(newTrust)
+        pushAlert({ title: d.title, description: d.desc, severity: sev, nodeId: target.id })
+        applyTrustDelta(target.id, penalty, d.event)
       }
     },
     [applyTrustDelta, bumpPulse, nodes, pushAlert, setNodes, useMock]
+  )
+
+  const resetNetwork = React.useCallback(async () => {
+    setResetting(true)
+    try {
+      if (useMock) {
+        loadMock()
+      } else {
+        await api.resetNetwork()
+        await loadFromAPI()
+      }
+      setAlerts([])
+      setSelectedId(null)
+      setDeviceDetail(null)
+    } catch (err) {
+      console.error("Reset network failed:", err)
+    } finally {
+      setResetting(false)
+    }
+  }, [useMock, loadFromAPI, loadMock])
+
+  const handleLayoutChange = React.useCallback(
+    (mode: LayoutMode) => {
+      setLayoutMode(mode)
+      const currentNodes = nodesRef.current
+      const currentEdges = edgesRef.current
+      let result: { nodes: Node<DeviceNodeData>[]; edges: Edge<TrafficEdgeData>[] }
+      if (mode === "radial") {
+        result = applyRadialLayout(currentNodes, currentEdges)
+      } else {
+        const direction = mode === "vertical" ? "TB" : "LR"
+        result = applyDagreLayout(currentNodes, currentEdges, direction)
+      }
+      setNodes(result.nodes)
+      setEdges(result.edges)
+      setTimeout(() => fitView({ padding: 0.22, duration: 300 }), 50)
+    },
+    [setNodes, setEdges, fitView]
   )
 
   if (loading) {
@@ -1643,11 +2010,14 @@ function CanvasInner() {
         }}
         onAddDevice={() => setAddDeviceOpen(true)}
         onSimulate={simulate}
+        onResetNetwork={resetNetwork}
+        resetting={resetting}
       />
       <DetailPanel node={selectedNode} alerts={alerts} deviceDetail={deviceDetail} onClose={() => setSelectedId(null)} />
       <AddDeviceModal
         open={addDeviceOpen}
         useMock={useMock}
+        existingDevices={deviceOptions}
         onClose={() => setAddDeviceOpen(false)}
         onAdded={refreshCanvas}
       />
@@ -1715,6 +2085,28 @@ function CanvasInner() {
                   </span>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div className="absolute bottom-4 right-4 z-30">
+            <div
+              className="pointer-events-auto flex items-center gap-1 rounded-xl border border-white/10 bg-zinc-950/60 p-1 shadow-[0_14px_45px_rgba(0,0,0,0.7)] backdrop-blur-md"
+              style={{ fontFamily: '"Calibri","Segoe UI",system-ui,-apple-system,sans-serif' }}
+            >
+              {(["radial", "vertical", "horizontal"] as LayoutMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => handleLayoutChange(mode)}
+                  className={cn(
+                    "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors capitalize",
+                    layoutMode === mode
+                      ? "bg-cyan-500/20 text-cyan-300 border border-cyan-400/30"
+                      : "text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-transparent"
+                  )}
+                >
+                  {mode}
+                </button>
+              ))}
             </div>
           </div>
         </ReactFlow>

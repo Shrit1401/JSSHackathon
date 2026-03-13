@@ -1,4 +1,4 @@
-export type RiskLevelAPI = "SAFE" | "LOW" | "MEDIUM" | "HIGH"
+export type RiskLevelAPI = "SAFE" | "LOW" | "MEDIUM" | "HIGH" | "COMPROMISED"
 
 export type DeviceStatus = "online" | "offline" | "compromised"
 
@@ -87,6 +87,7 @@ export interface EventOut {
 export interface SimulateAttackRequest {
   device_id: string
   attack_type?: AttackType
+  stealth_level?: "low" | "medium" | "high"
 }
 
 export interface SimulateAttackResponse {
@@ -98,6 +99,7 @@ export interface SimulateAttackResponse {
   new_risk_level: RiskLevelAPI
   alert_created: boolean
   message: string
+  detection_difficulty?: number
 }
 
 export interface AddDeviceRequest {
@@ -108,4 +110,24 @@ export interface AddDeviceRequest {
   trust_score?: number
   traffic_rate?: number
   status?: DeviceStatus
+  parent_id?: string
+}
+
+export interface AddDeviceResponse {
+  id: string
+  name: string
+  device_type: string
+  ip_address: string
+  vendor: string
+  trust_score: number
+  risk_level: RiskLevelAPI
+  traffic_rate: number
+  status: DeviceStatus
+  last_seen: string
+  parent_id?: string
+}
+
+export interface ResetNetworkResponse {
+  message: string
+  devices_reset: number
 }

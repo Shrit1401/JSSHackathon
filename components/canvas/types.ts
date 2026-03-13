@@ -36,11 +36,13 @@ export type AlertItem = {
   deviceName?: string
   confidence?: number
   indicators?: string[]
+  detectionDifficulty?: number
 }
 
 export type TrafficEdgeData = {
   status: "normal" | "suspicious" | "compromised" | "attack"
   speed?: number
   label?: string
+  pathType?: "bezier" | "smoothstep"
 }
 

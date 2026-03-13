@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { BaseEdge, EdgeLabelRenderer, getBezierPath } from "reactflow"
+import { BaseEdge, EdgeLabelRenderer, getBezierPath, getSmoothStepPath } from "reactflow"
 
 import type { TrafficEdgeData } from "@/components/canvas/types"
 
@@ -52,14 +52,24 @@ export function TrafficEdge({
   data,
   markerEnd,
 }: Props) {
-  const [edgePath] = getBezierPath({
-    sourceX,
-    sourceY,
-    targetX,
-    targetY,
-    sourcePosition,
-    targetPosition,
-  })
+  const [edgePath] = data?.pathType === "smoothstep"
+    ? getSmoothStepPath({
+        sourceX,
+        sourceY,
+        targetX,
+        targetY,
+        sourcePosition,
+        targetPosition,
+        borderRadius: 16,
+      })
+    : getBezierPath({
+        sourceX,
+        sourceY,
+        targetX,
+        targetY,
+        sourcePosition,
+        targetPosition,
+      })
 
   const status = data?.status ?? "normal"
   const dur = Math.max(1.8, Math.min(5.5, (data?.speed ?? 3.2)))
