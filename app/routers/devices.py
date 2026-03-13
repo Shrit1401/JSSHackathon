@@ -125,6 +125,7 @@ async def add_device(body: AddDeviceRequest):
         "status": body.status,
         "last_seen": now,
         "created_at": now,
+        "parent_id": body.parent_id,
     }
     try:
         result = await asyncio.to_thread(
@@ -217,14 +218,27 @@ async def get_network_map():
         for d in devices
     ]
 
-    hub = next(
-        (d for d in devices if d["device_type"] in ("router", "gateway")),
-        devices[0],
-    )
-    edges = [
-        NetworkEdge(source=hub["id"], target=d["id"])
-        for d in devices
-        if d["id"] != hub["id"]
-    ]
+    gateway = next((d for d in devices if d["device_type"] == "gateway"), devices[0])
+    router  = next((d for d in devices if d["device_type"] == "router"), gateway)
+    hub     = next((d for d in devices if d["device_type"] == "hub"), router)
+
+    PARENT_MAP = {
+        "gateway":    None,
+        "router":     gateway["id"],
+        "hub":        router["id"],
+        "camera":     hub["id"],
+        "sensor":     hub["id"],
+        "smart_tv":   hub["id"],
+        "laptop":     router["id"],
+        "printer":    router["id"],
+        "thermostat": hub["id"],
+        "smartphone": router["id"],
+    }
+
+    edges = []
+    for d in devices:
+        parent_id = d.get("parent_id") or PARENT_MAP.get(d["device_type"], gateway["id"])
+        if parent_id and parent_id != d["id"]:
+            edges.append(NetworkEdge(source=parent_id, target=d["id"]))
 
     return NetworkMap(nodes=nodes, edges=edges)

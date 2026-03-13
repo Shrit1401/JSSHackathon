@@ -2,6 +2,7 @@ import asyncio
 import logging
 import random
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 
@@ -19,6 +20,12 @@ logger = logging.getLogger("iot_monitor.simulation")
 router = APIRouter()
 
 ATTACK_TYPES = ["TRAFFIC_SPIKE", "POLICY_VIOLATION", "NEW_DESTINATION", "BACKDOOR", "DATA_EXFILTRATION"]
+
+BACKDOOR_PRESETS = {
+    "low":    {"trust_low": -10, "trust_high": -5,  "traffic_low": 0.5, "traffic_high": 2.0,  "detection": 85},
+    "medium": {"trust_low": -25, "trust_high": -15, "traffic_low": 3.0, "traffic_high": 8.0,  "detection": 50},
+    "high":   {"trust_low": -45, "trust_high": -30, "traffic_low": 10.0, "traffic_high": 20.0, "detection": 20},
+}
 
 
 @router.post(
@@ -141,6 +148,9 @@ async def _run_dedicated_attack(
     new_status: str,
     event_description: str,
     status_detail: str,
+    trust_delta_low: Optional[int] = None,
+    trust_delta_high: Optional[int] = None,
+    detection_difficulty: Optional[int] = None,
 ) -> SimulateAttackResponse:
     try:
         result = await asyncio.to_thread(
@@ -160,7 +170,11 @@ async def _run_dedicated_attack(
 
     old_trust = device["trust_score"]
     old_risk = device["risk_level"]
-    new_trust = adjust_trust_score(old_trust, attack_type)
+    if trust_delta_low is not None and trust_delta_high is not None:
+        delta = random.randint(trust_delta_low, trust_delta_high)
+        new_trust = max(0, old_trust + delta)
+    else:
+        new_trust = adjust_trust_score(old_trust, attack_type)
     new_risk = compute_risk_level(new_trust)
     new_traffic = round(device["traffic_rate"] + random.uniform(traffic_delta_low, traffic_delta_high), 2)
     now = datetime.now(timezone.utc).isoformat()
@@ -222,6 +236,7 @@ async def _run_dedicated_attack(
             f"Trust dropped {old_trust} → {new_trust}. "
             f"Risk: {old_risk} → {new_risk}. {status_detail}"
         ),
+        detection_difficulty=detection_difficulty,
     )
 
 
@@ -240,14 +255,18 @@ async def _run_dedicated_attack(
     ),
 )
 async def simulate_backdoor(body: SimulateAttackRequest):
+    preset = BACKDOOR_PRESETS[body.stealth_level or "medium"]
     return await _run_dedicated_attack(
         device_id=body.device_id,
         attack_type="BACKDOOR",
-        traffic_delta_low=2.0,
-        traffic_delta_high=8.0,
+        traffic_delta_low=preset["traffic_low"],
+        traffic_delta_high=preset["traffic_high"],
         new_status="compromised",
         event_description="Backdoor implant detected — persistent remote access established",
         status_detail="Device status set to 'compromised'.",
+        trust_delta_low=preset["trust_low"],
+        trust_delta_high=preset["trust_high"],
+        detection_difficulty=preset["detection"],
     )
 
 

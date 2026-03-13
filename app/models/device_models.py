@@ -103,6 +103,7 @@ class AddDeviceRequest(BaseModel):
     trust_score: Optional[int] = 100
     traffic_rate: Optional[float] = 0.0
     status: Optional[str] = "online"
+    parent_id: Optional[str] = None
 
 
 class AddDeviceResponse(BaseModel):
@@ -119,11 +120,13 @@ class AddDeviceResponse(BaseModel):
     status: str
     last_seen: str
     created_at: str
+    parent_id: Optional[str] = None
 
 
 class SimulateAttackRequest(BaseModel):
     device_id: str
     attack_type: Optional[str] = None
+    stealth_level: Optional[Literal["low", "medium", "high"]] = "medium"
 
 
 class SimulateAttackResponse(BaseModel):
@@ -135,6 +138,7 @@ class SimulateAttackResponse(BaseModel):
     new_risk_level: str
     alert_created: bool
     message: str
+    detection_difficulty: Optional[int] = None
 
 
 class ExplainResponse(BaseModel):
