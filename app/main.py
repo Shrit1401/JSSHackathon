@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import random
@@ -12,6 +14,7 @@ from app.database.supabase_client import supabase
 from app.routers import alerts, devices, events, simulation, whatsapp
 from app.services.trust_engine import SEED_DEVICES, compute_risk_level
 from app.services.ml_pipeline import pipeline
+from app.services.whatsapp_alerts import send_compromise_alert
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,6 +74,8 @@ async def run_simulation_tick() -> None:
 
     now = datetime.now(timezone.utc).isoformat()
 
+    compromised_devices: list[tuple[str, int, str]] = []
+
     for supa_id, data in tick_results.items():
         try:
             new_trust = data["trust_score"]
@@ -85,8 +90,32 @@ async def run_simulation_tick() -> None:
                 .eq("id", sid)
                 .execute()
             )
+            if new_risk == "COMPROMISED":
+                compromised_devices.append((supa_id, new_trust, new_risk))
         except Exception:
             logger.exception("Failed to sync trust for device %s", supa_id)
+
+    for supa_id, trust, risk in compromised_devices:
+        try:
+            dev_result = await asyncio.to_thread(
+                lambda did=supa_id: supabase.table("devices")
+                .select("name,device_type")
+                .eq("id", did)
+                .limit(1)
+                .execute()
+            )
+            dev_row = dev_result.data[0] if dev_result.data else {}
+            await asyncio.to_thread(
+                lambda: send_compromise_alert(
+                    device_name=dev_row.get("name", "Unknown"),
+                    device_id=supa_id,
+                    device_type=dev_row.get("device_type", "unknown"),
+                    trust_score=trust,
+                    risk_level=risk,
+                )
+            )
+        except Exception:
+            logger.exception("Failed to send WhatsApp evidence card for %s", supa_id)
 
     try:
         new_alerts = await asyncio.to_thread(pipeline.get_new_alerts)

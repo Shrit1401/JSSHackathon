@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import random
@@ -13,6 +15,7 @@ from app.services.trust_engine import (
     should_create_alert,
 )
 from app.services.ml_pipeline import pipeline
+from app.services.whatsapp_alerts import send_attack_evidence_card
 
 logger = logging.getLogger("iot_monitor.simulation")
 router = APIRouter()
@@ -142,6 +145,21 @@ async def _run_ml_attack(
         device["name"], attack_type, old_trust, new_trust,
         old_risk, new_risk, alert_created, breakdown_info,
     )
+
+    if new_risk == "COMPROMISED":
+        try:
+            await asyncio.to_thread(
+                lambda: send_attack_evidence_card(
+                    device=device,
+                    attack_type=attack_type,
+                    old_trust=old_trust,
+                    new_trust=new_trust,
+                    old_risk=old_risk,
+                    new_risk=new_risk,
+                )
+            )
+        except Exception:
+            logger.exception("Failed to send WhatsApp evidence card for %s", device["name"])
 
     return SimulateAttackResponse(
         device_id=device_id,
