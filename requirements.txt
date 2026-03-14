@@ -8,5 +8,5 @@ pyOpenSSL
 numpy
 scikit-learn
 twilio
-google-genai
+openai
 python-multipart

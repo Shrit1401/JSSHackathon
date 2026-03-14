@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from app.calculate.models import DeviceType, AlertSeverity
+from app.calculate.models import DeviceType, AlertSeverity, FeatureStats
 from app.calculate.engines.telemetry import TelemetryGenerator
 from app.calculate.engines.features import FeatureEngine
 from app.calculate.engines.baseline import BaselineEngine
@@ -11,7 +11,8 @@ from app.calculate.engines.policy import PolicyEngine
 from app.calculate.engines.ml import MLDetector
 from app.calculate.engines.trust import TrustEngine
 from app.calculate.engines.alerts import AlertManager
-from app.calculate.device_profiles import ATTACK_PROFILES
+from app.calculate.device_profiles import ATTACK_PROFILES, DEVICE_PROFILES
+from app.calculate.engines.baseline import NUMERIC_FEATURES
 
 logger = logging.getLogger("iot_monitor.ml_pipeline")
 
@@ -243,6 +244,149 @@ class MLPipeline:
             "total_denied": ps.total_denied,
             "total_poisoning_attempts": ps.total_poisoning_attempts,
             "average_integrity": ps.average_integrity,
+        }
+
+    def get_device_full_profile(self, supabase_device_id: str, supabase_device_type: str) -> Optional[dict]:
+        internal_id = self.device_map.get(supabase_device_id)
+        internal_type = SUPABASE_TO_INTERNAL_TYPE.get(supabase_device_type)
+        if not internal_type:
+            return None
+
+        profile_data = DEVICE_PROFILES.get(internal_type)
+        profile_section = None
+        if profile_data:
+            profile_section = {
+                "description": profile_data["description"],
+                "normal_protocols": [p.value for p in profile_data["normal_protocols"]],
+                "suspicious_protocols": [p.value for p in profile_data["suspicious_protocols"]],
+                "expected_bytes_sent": {"min": profile_data["bytes_sent"][0], "max": profile_data["bytes_sent"][1]},
+                "expected_bytes_received": {"min": profile_data["bytes_received"][0], "max": profile_data["bytes_received"][1]},
+                "expected_session_duration": {"min": profile_data["session_duration"][0], "max": profile_data["session_duration"][1]},
+                "expected_packet_count": {"min": profile_data["packet_count"][0], "max": profile_data["packet_count"][1]},
+                "protocol_weights": {k.value: v for k, v in profile_data["protocol_weights"].items()},
+                "normal_destinations": [d.value for d in profile_data["normal_destinations"]],
+                "destination_weights": {k.value: v for k, v in profile_data["destination_weights"].items()},
+            }
+
+        baseline_section = None
+        if internal_id:
+            bl = self.baseline_engine.get_device_baseline(internal_id)
+            if bl:
+                stats = {}
+                for feat in NUMERIC_FEATURES:
+                    fs: FeatureStats = getattr(bl, feat)
+                    stats[feat] = {
+                        "mean": fs.mean, "std": fs.std,
+                        "min_val": fs.min_val, "max_val": fs.max_val,
+                        "samples": fs.samples,
+                    }
+                baseline_section = {
+                    "windows_learned": bl.windows_learned,
+                    "is_frozen": bl.is_frozen,
+                    "allowed_protocols": bl.allowed_protocols,
+                    "expected_destinations": bl.expected_destination_types,
+                    "stats": stats,
+                }
+
+        drift_section = None
+        if internal_id:
+            ds = self.drift_detector.get_device_state(internal_id)
+            if ds:
+                drift_section = {
+                    "is_drifting": ds.is_drifting,
+                    "severity": ds.current_severity.value,
+                    "drift_score": round(ds.latest_drift_score, 4),
+                    "consecutive_drift_windows": ds.consecutive_drift_windows,
+                    "peak_drift_score": round(ds.peak_drift_score, 4),
+                    "currently_drifting_features": ds.currently_drifting_features,
+                    "total_windows_analyzed": ds.total_windows_analyzed,
+                    "total_drift_windows": ds.total_drift_windows,
+                }
+
+        policy_section = None
+        if internal_id:
+            ps = self.policy_engine.get_device_state(internal_id)
+            if ps:
+                policy_section = {
+                    "is_compliant": ps.is_compliant,
+                    "total_violations": ps.total_violations,
+                    "violation_rate": ps.violation_rate,
+                    "violations_by_type": ps.violations_by_type,
+                    "total_records_evaluated": ps.total_records_evaluated,
+                }
+
+        anomaly_section = None
+        if internal_id:
+            scores = self.ml_detector.get_device_scores(internal_id)
+            if scores:
+                latest = scores[-1]
+                anomaly_section = {
+                    "anomaly_score": round(latest.anomaly_score, 4),
+                    "is_anomalous": latest.is_anomalous,
+                    "raw_score": round(latest.raw_score, 4),
+                    "feature_contributions": latest.feature_contributions,
+                }
+
+        trust_section = None
+        if internal_id:
+            ts = self.trust_engine.get_device_trust(internal_id)
+            if ts:
+                bd = ts.signal_breakdown
+                signal_out = {
+                    "ml_anomaly_score": round(bd.ml_anomaly_score, 4),
+                    "ml_penalty": round(bd.ml_penalty, 2),
+                    "drift_score": round(bd.drift_score, 4),
+                    "drift_penalty": round(bd.drift_penalty, 2),
+                    "drift_confirmed": bd.drift_confirmed,
+                    "drift_confirmation_penalty": round(bd.drift_confirmation_penalty, 2),
+                    "policy_violations_total": bd.policy_violations_total,
+                    "policy_high_confidence": bd.policy_high_confidence,
+                    "policy_penalty": round(bd.policy_penalty, 2),
+                    "total_penalty": round(bd.total_penalty, 2),
+                    "baseline_update_allowed": ts.baseline_update_allowed,
+                }
+                history_scores = self.trust_engine.history.get(internal_id, [])
+                history_out = [
+                    {"trust_score": round(h.trust_score, 2), "risk_level": h.risk_level.value}
+                    for h in history_scores
+                ]
+                trust_section = {
+                    "current_score": round(ts.trust_score, 2),
+                    "risk_level": ts.risk_level.value,
+                    "signal_breakdown": signal_out,
+                    "baseline_update_allowed": ts.baseline_update_allowed,
+                    "history": history_out,
+                }
+
+        protection_section = None
+        if internal_id:
+            prot = self.trust_engine.protector.get_device_state(internal_id)
+            if prot:
+                protection_section = {
+                    "status": prot.status.value,
+                    "is_frozen": prot.is_frozen,
+                    "is_quarantined": prot.is_quarantined,
+                    "consecutive_denied": prot.consecutive_denied,
+                    "baseline_integrity": prot.baseline_integrity,
+                    "poisoning_attempts": prot.poisoning_attempts,
+                    "total_allowed": prot.total_allowed,
+                    "total_denied": prot.total_denied,
+                }
+
+        applicable_attacks = []
+        for attack_name, attack_prof in ATTACK_PROFILES.items():
+            if internal_type in attack_prof["applicable_devices"]:
+                applicable_attacks.append(attack_name)
+
+        return {
+            "profile": profile_section,
+            "baseline": baseline_section,
+            "drift": drift_section,
+            "policy": policy_section,
+            "anomaly": anomaly_section,
+            "trust": trust_section,
+            "protection": protection_section,
+            "applicable_attacks": applicable_attacks,
         }
 
     def reset(self) -> None:

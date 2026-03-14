@@ -3,15 +3,16 @@ import json
 import logging
 import os
 
-from google import genai
+from openai import OpenAI
 
 from app.database.supabase_client import supabase
 from app.services.ml_pipeline import pipeline
 
 logger = logging.getLogger("iot_monitor.ai_chat")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-MODEL = "gemini-2.0-flash"
+HACKCLUB_API_KEY = os.getenv("HACKCLUB_API_KEY", "")
+HACKCLUB_BASE_URL = "https://ai.hackclub.com/proxy/v1"
+MODEL = "qwen/qwen3-32b"
 
 SYSTEM_INSTRUCTION = """You are an IoT security assistant for the IoT Trust Monitor system.
 You have access to real-time data about the user's IoT network, including device info,
@@ -106,33 +107,33 @@ def _build_context() -> str:
 
 
 async def chat(user_message: str) -> str:
-    if not GEMINI_API_KEY:
-        return "AI chat is not configured. Please set the GEMINI_API_KEY environment variable."
+    if not HACKCLUB_API_KEY:
+        return "AI chat is not configured. Please set the HACKCLUB_API_KEY environment variable."
 
     try:
         context = await asyncio.to_thread(_build_context)
 
         full_system = SYSTEM_INSTRUCTION + "\n\nCURRENT NETWORK STATE:\n" + context
 
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        client = OpenAI(api_key=HACKCLUB_API_KEY, base_url=HACKCLUB_BASE_URL)
 
         response = await asyncio.to_thread(
-            lambda: client.models.generate_content(
+            lambda: client.chat.completions.create(
                 model=MODEL,
-                contents=user_message,
-                config=genai.types.GenerateContentConfig(
-                    system_instruction=full_system,
-                    max_output_tokens=1024,
-                    temperature=0.7,
-                ),
+                messages=[
+                    {"role": "system", "content": full_system},
+                    {"role": "user", "content": user_message},
+                ],
+                max_tokens=1024,
+                temperature=0.7,
             )
         )
 
-        reply = response.text or "Sorry, I couldn't generate a response."
+        reply = response.choices[0].message.content or "Sorry, I couldn't generate a response."
         if len(reply) > 1500:
             reply = reply[:1497] + "..."
         return reply
 
     except Exception:
-        logger.exception("Gemini chat failed")
+        logger.exception("AI chat failed")
         return "Sorry, something went wrong while processing your message. Please try again."

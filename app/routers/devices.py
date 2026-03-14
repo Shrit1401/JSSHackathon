@@ -10,6 +10,7 @@ from app.models.device_models import (
     AddDeviceRequest,
     AddDeviceResponse,
     DeviceDetail,
+    DeviceFullProfile,
     DeviceSummary,
     ExplainResponse,
     NetworkEdge,
@@ -186,6 +187,47 @@ async def get_device(device_id: str):
         protocol_usage=generate_protocol_usage(device["device_type"]),
         security_explanation=generate_security_explanation(device),
         signal_breakdown=_get_signal_breakdown(device_id),
+    )
+
+
+@router.get(
+    "/devices/{device_id}/profile",
+    response_model=DeviceFullProfile,
+    summary="Full device profile with all ML engine data",
+    description=(
+        "Returns everything known about a device: its behavioral profile from the "
+        "device catalog, learned baseline statistics, drift state, policy compliance, "
+        "ML anomaly scores with feature contributions, full trust history with signal "
+        "breakdown, baseline protection state, and which attack types the device is "
+        "susceptible to."
+    ),
+)
+async def get_device_profile(device_id: str):
+    try:
+        device = await _fetch_device(device_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("GET /devices/%s/profile — DB error", device_id)
+        raise HTTPException(status_code=502, detail="Database error") from exc
+
+    ml_data = pipeline.get_device_full_profile(device_id, device["device_type"]) or {}
+
+    return DeviceFullProfile(
+        **{k: device[k] for k in (
+            "id", "name", "device_type", "ip_address", "vendor",
+            "trust_score", "risk_level", "traffic_rate", "status", "last_seen",
+        )},
+        created_at=device.get("created_at"),
+        profile=ml_data.get("profile"),
+        baseline=ml_data.get("baseline"),
+        drift=ml_data.get("drift"),
+        policy=ml_data.get("policy"),
+        anomaly=ml_data.get("anomaly"),
+        trust=ml_data.get("trust"),
+        protection=ml_data.get("protection"),
+        applicable_attacks=ml_data.get("applicable_attacks", []),
+        security_explanation=generate_security_explanation(device),
     )
 
 
