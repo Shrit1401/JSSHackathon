@@ -7,3 +7,5 @@ certifi
 pyOpenSSL
 numpy
 scikit-learn
+twilio
+google-genai

@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.database.supabase_client import supabase
-from app.routers import alerts, devices, events, simulation
+from app.routers import alerts, devices, events, simulation, whatsapp
 from app.services.trust_engine import SEED_DEVICES, compute_risk_level
 from app.services.ml_pipeline import pipeline
 
@@ -179,6 +179,7 @@ app.include_router(devices.router, tags=["Devices"])
 app.include_router(alerts.router, tags=["Alerts"])
 app.include_router(events.router, tags=["Events"])
 app.include_router(simulation.router, tags=["Simulation"])
+app.include_router(whatsapp.router, tags=["WhatsApp"])
 
 
 @app.get("/health", tags=["Health"])
