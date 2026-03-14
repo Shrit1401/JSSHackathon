@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import defaultdict
 from typing import Optional
 
@@ -90,7 +90,7 @@ class TrustEngine:
         result = DeviceTrustScore(
             device_id=device_id, device_type=device_type, trust_score=trust,
             risk_level=risk, signal_breakdown=breakdown,
-            baseline_update_allowed=baseline_allowed, timestamp=datetime.utcnow(),
+            baseline_update_allowed=baseline_allowed, timestamp=datetime.now(timezone.utc),
         )
         self.history[device_id].append(result)
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import defaultdict
 from typing import Optional
 
@@ -69,7 +69,7 @@ class BaselineEngine:
 
         baseline = DeviceBaseline(
             device_id=device_id, device_type=device_type,
-            windows_learned=len(features), last_updated=datetime.utcnow(),
+            windows_learned=len(features), last_updated=datetime.now(timezone.utc),
             allowed_protocols=_collect_protocols(features),
             expected_destination_types=_collect_destination_types(device_type),
             **stats,
@@ -88,7 +88,7 @@ class BaselineEngine:
 
         baseline = DeviceTypeBaseline(
             device_type=device_type, device_count=len(device_ids),
-            total_windows=len(features), last_updated=datetime.utcnow(),
+            total_windows=len(features), last_updated=datetime.now(timezone.utc),
             allowed_protocols=_collect_protocols(features),
             expected_destination_types=_collect_destination_types(device_type),
             traffic_direction=TRAFFIC_DIRECTIONS.get(device_type, "unknown"),
@@ -169,7 +169,7 @@ class BaselineEngine:
         new_protos.update(new_feature.protocol_distribution.keys())
         baseline.allowed_protocols = sorted(new_protos)
         baseline.windows_learned = n + 1
-        baseline.last_updated = datetime.utcnow()
+        baseline.last_updated = datetime.now(timezone.utc)
         return True
 
     def freeze_device(self, device_id: str) -> bool:

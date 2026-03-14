@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import defaultdict
 from typing import Optional
 
@@ -106,7 +106,7 @@ class AlertManager:
                 title=f"Device quarantined: {state.device_id}",
                 reason=f"{state.device_id} quarantined after {state.consecutive_denied} consecutive baseline denials",
                 evidence={"consecutive_denied": state.consecutive_denied, "poisoning_attempts": state.poisoning_attempts, "baseline_integrity": state.baseline_integrity},
-                trust_score_at_time=state.trust_score, timestamp=state.last_decision_time or datetime.utcnow(),
+                trust_score_at_time=state.trust_score, timestamp=state.last_decision_time or datetime.now(timezone.utc),
             ))
 
     def scan_poisoning_attempts(self):

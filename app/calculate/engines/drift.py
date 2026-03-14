@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import defaultdict
 from typing import Optional
 
@@ -90,7 +90,7 @@ class DriftDetector:
         self.events.append(DriftEvent(
             event_id=str(uuid.uuid4()), device_id=device_id, device_type=device_type,
             event_type=event_type, severity=severity, drift_score=drift_score,
-            window_id=window_id, timestamp=datetime.utcnow(),
+            window_id=window_id, timestamp=datetime.now(timezone.utc),
             drifting_features=drifting_features, description=description,
         ))
 
@@ -128,10 +128,10 @@ class DriftDetector:
             state.total_drift_windows += 1
             state.max_consecutive_drift = max(state.max_consecutive_drift, state.consecutive_drift_windows)
             if not state.first_drift_detected:
-                state.first_drift_detected = datetime.utcnow()
-            state.last_drift_detected = datetime.utcnow()
+                state.first_drift_detected = datetime.now(timezone.utc)
+            state.last_drift_detected = datetime.now(timezone.utc)
             if state.consecutive_drift_windows == CONFIRMATION_WINDOWS:
-                state.drift_confirmed_at = datetime.utcnow()
+                state.drift_confirmed_at = datetime.now(timezone.utc)
         else:
             prev_was_drifting = state.is_drifting
             state.consecutive_drift_windows = 0
@@ -165,7 +165,7 @@ class DriftDetector:
 
         result = DriftResult(
             device_id=device_id, device_type=device_type, window_id=window_id,
-            timestamp=datetime.utcnow(), is_drifting=is_drifting, severity=severity,
+            timestamp=datetime.now(timezone.utc), is_drifting=is_drifting, severity=severity,
             drift_score=drift_score, consecutive_drift_windows=state.consecutive_drift_windows,
             drifting_features=feature_drifts, top_drifting_feature=top_feature,
             top_z_score=top_z, total_features_checked=len(feature_drifts),

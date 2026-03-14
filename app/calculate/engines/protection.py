@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import defaultdict
 from typing import Optional
 
@@ -30,7 +30,7 @@ class BaselineProtector:
 
     def gate_check(self, device_id: str, device_type: DeviceType, trust_score: float, feature_vector: Optional[DeviceFeatureVector] = None) -> GateDecision:
         self._device_types[device_id] = device_type
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         if device_id in self._quarantined:
             decision = GateDecision.QUARANTINED
@@ -98,7 +98,7 @@ class BaselineProtector:
         self.poisoning_attempts.append(PoisoningAttempt(
             device_id=device_id, device_type=device_type,
             trust_score_at_time=trust_score, protection_status=status,
-            feature_drift_detected=has_drift, reason=reason, timestamp=datetime.utcnow(),
+            feature_drift_detected=has_drift, reason=reason, timestamp=datetime.now(timezone.utc),
         ))
 
     def get_device_state(self, device_id: str) -> Optional[DeviceProtectionState]:

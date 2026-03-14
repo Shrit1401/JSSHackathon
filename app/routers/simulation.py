@@ -43,19 +43,22 @@ async def _post_attack_background(
 ) -> None:
     try:
         ml_alerts = await asyncio.to_thread(pipeline.get_new_alerts)
-        for alert_data in ml_alerts[:5]:
-            if alert_data["device_id"] == device_id:
-                ml_payload = {
-                    "device_id": device_id,
-                    "device_name": device["name"],
-                    "alert_type": alert_data["alert_type"],
-                    "severity": alert_data["severity"],
-                    "message": alert_data["message"],
-                    "timestamp": alert_data["timestamp"],
-                }
-                await asyncio.to_thread(
-                    lambda p=ml_payload: supabase.table("alerts").insert(p).execute()
-                )
+        matching = [
+            {
+                "device_id": device_id,
+                "device_name": device["name"],
+                "alert_type": a["alert_type"],
+                "severity": a["severity"],
+                "message": a["message"],
+                "timestamp": a["timestamp"],
+            }
+            for a in ml_alerts[:5]
+            if a["device_id"] == device_id
+        ]
+        if matching:
+            await asyncio.to_thread(
+                lambda rows=matching: supabase.table("alerts").insert(rows).execute()
+            )
     except Exception:
         logger.exception("background — ML alert insert failed for %s", device_id)
 
@@ -136,7 +139,7 @@ async def _run_ml_attack(
     now = datetime.now(timezone.utc).isoformat()
 
     try:
-        await asyncio.to_thread(
+        device_update = asyncio.to_thread(
             lambda: supabase.table("devices")
             .update({
                 "trust_score": new_trust,
@@ -148,8 +151,7 @@ async def _run_ml_attack(
             .eq("id", device_id)
             .execute()
         )
-
-        await asyncio.to_thread(
+        event_insert = asyncio.to_thread(
             lambda: supabase.table("events")
             .insert({
                 "device_id": device_id,
@@ -159,19 +161,22 @@ async def _run_ml_attack(
             })
             .execute()
         )
+        alert_payload = build_alert_payload(device, attack_type, new_trust)
+        alert_insert = asyncio.to_thread(
+            lambda p=alert_payload: supabase.table("alerts").insert(p).execute()
+        )
+        results = await asyncio.gather(
+            device_update, event_insert, alert_insert,
+            return_exceptions=True,
+        )
+        if isinstance(results[0], Exception) or isinstance(results[1], Exception):
+            raise HTTPException(status_code=502, detail="Database error")
+        alert_created = not isinstance(results[2], Exception)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("attack simulation — DB write error")
         raise HTTPException(status_code=502, detail="Database error") from exc
-
-    alert_created = True
-    try:
-        payload = build_alert_payload(device, attack_type, new_trust)
-        await asyncio.to_thread(
-            lambda: supabase.table("alerts").insert(payload).execute()
-        )
-    except Exception:
-        logger.exception("attack simulation — primary alert insert failed (non-fatal)")
-        alert_created = False
 
     response = SimulateAttackResponse(
         device_id=device_id,
@@ -319,21 +324,25 @@ async def reset_network():
 
     device_ids = [row["id"] for row in (result.data or [])]
     now = datetime.now(timezone.utc).isoformat()
-    updated = 0
-    for device_id in device_ids:
-        new_trust = random.randint(85, 95)
+
+    async def _reset_one(did: str) -> bool:
         try:
+            t = random.randint(85, 95)
             await asyncio.to_thread(
-                lambda did=device_id, t=new_trust: supabase.table("devices").update({
-                    "trust_score": t,
+                lambda d=did, tr=t: supabase.table("devices").update({
+                    "trust_score": tr,
                     "risk_level": "SAFE",
                     "status": "online",
                     "last_seen": now,
-                }).eq("id", did).execute()
+                }).eq("id", d).execute()
             )
-            updated += 1
+            return True
         except Exception:
-            logger.exception("POST /reset-network — failed to reset device %s", device_id)
+            logger.exception("POST /reset-network — failed to reset device %s", did)
+            return False
+
+    results = await asyncio.gather(*[_reset_one(did) for did in device_ids])
+    updated = sum(results)
 
     try:
         all_devices = await asyncio.to_thread(

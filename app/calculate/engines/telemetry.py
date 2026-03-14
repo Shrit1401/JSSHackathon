@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import random
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import numpy as np
@@ -108,7 +108,7 @@ class TelemetryGenerator:
         return record
 
     def generate_window(self, records_per_device: int = 3, attack_devices: Optional[dict[str, str]] = None) -> list[TelemetryRecord]:
-        base_time = datetime.utcnow()
+        base_time = datetime.now(timezone.utc)
         self.window_counter += 1
         attack_devices = attack_devices or {}
         window_records = []

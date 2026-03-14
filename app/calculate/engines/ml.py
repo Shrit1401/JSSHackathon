@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from collections import defaultdict
 
@@ -51,7 +51,7 @@ class MLDetector:
             "contamination": 0.01,
             "training_samples": len(baseline_features),
             "training_features": INPUT_FEATURES,
-            "trained_at": datetime.utcnow().isoformat(),
+            "trained_at": datetime.now(timezone.utc).isoformat(),
             "dataset_source": "baseline_telemetry",
             "benign_samples": len(baseline_features),
             "malicious_samples": 0,
@@ -94,7 +94,7 @@ class MLDetector:
             raw_score=round(raw_score, 4), is_anomalous=is_anomalous,
             threshold=ANOMALY_THRESHOLD,
             feature_contributions=self._compute_contributions(feature_vector, X_scaled),
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
         )
         self.scores_store[feature_vector.device_id].append(result)
         return result

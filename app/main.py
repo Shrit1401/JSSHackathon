@@ -3,8 +3,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import warnings
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+
+warnings.filterwarnings("ignore", message=".*sklearn.utils.parallel.delayed.*")
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -82,6 +85,21 @@ async def _send_compromise_whatsapp(supa_id: str, trust: int, risk: str) -> None
         logger.exception("background — WhatsApp send failed for %s", supa_id)
 
 
+async def _update_device_trust(supa_id: str, trust: int, risk: str, now: str) -> tuple[str, int, str] | None:
+    try:
+        await asyncio.to_thread(
+            lambda sid=supa_id, t=trust, r=risk: supabase.table("devices")
+            .update({"trust_score": t, "risk_level": r, "last_seen": now})
+            .eq("id", sid)
+            .execute()
+        )
+        if risk == "COMPROMISED":
+            return (supa_id, trust, risk)
+    except Exception:
+        logger.exception("Failed to sync trust for device %s", supa_id)
+    return None
+
+
 async def run_simulation_tick() -> None:
     if not pipeline.is_trained:
         return
@@ -97,55 +115,49 @@ async def run_simulation_tick() -> None:
 
     now = datetime.now(timezone.utc).isoformat()
 
-    compromised_devices: list[tuple[str, int, str]] = []
+    update_coros = [
+        _update_device_trust(sid, data["trust_score"], data["risk_level"], now)
+        for sid, data in tick_results.items()
+    ]
+    results = await asyncio.gather(*update_coros)
 
-    for supa_id, data in tick_results.items():
-        try:
-            new_trust = data["trust_score"]
-            new_risk = data["risk_level"]
-            await asyncio.to_thread(
-                lambda sid=supa_id, t=new_trust, r=new_risk: supabase.table("devices")
-                .update({
-                    "trust_score": t,
-                    "risk_level": r,
-                    "last_seen": now,
-                })
-                .eq("id", sid)
-                .execute()
-            )
-            if new_risk == "COMPROMISED":
-                compromised_devices.append((supa_id, new_trust, new_risk))
-        except Exception:
-            logger.exception("Failed to sync trust for device %s", supa_id)
-
-    for supa_id, trust, risk in compromised_devices:
-        asyncio.create_task(_send_compromise_whatsapp(supa_id, trust, risk))
+    for r in results:
+        if r is not None:
+            asyncio.create_task(_send_compromise_whatsapp(*r))
 
     try:
         new_alerts = await asyncio.to_thread(pipeline.get_new_alerts)
-        for alert_data in new_alerts[:10]:
-            device_result = await asyncio.to_thread(
-                lambda did=alert_data["device_id"]: supabase.table("devices")
-                .select("name")
-                .eq("id", did)
-                .limit(1)
-                .execute()
-            )
-            device_name = ""
-            if device_result.data:
-                device_name = device_result.data[0].get("name", "")
+        if new_alerts:
+            name_cache: dict[str, str] = {}
+            unique_ids = {a["device_id"] for a in new_alerts[:10]}
+            name_coros = []
+            for did in unique_ids:
+                async def _fetch_name(d=did):
+                    try:
+                        res = await asyncio.to_thread(
+                            lambda dd=d: supabase.table("devices")
+                            .select("name").eq("id", dd).limit(1).execute()
+                        )
+                        name_cache[d] = res.data[0].get("name", "") if res.data else ""
+                    except Exception:
+                        name_cache[d] = ""
+                name_coros.append(_fetch_name())
+            await asyncio.gather(*name_coros)
 
-            payload = {
-                "device_id": alert_data["device_id"],
-                "device_name": device_name,
-                "alert_type": alert_data["alert_type"],
-                "severity": alert_data["severity"],
-                "message": alert_data["message"],
-                "timestamp": alert_data["timestamp"],
-            }
-            await asyncio.to_thread(
-                lambda p=payload: supabase.table("alerts").insert(p).execute()
-            )
+            alert_rows = []
+            for alert_data in new_alerts[:10]:
+                alert_rows.append({
+                    "device_id": alert_data["device_id"],
+                    "device_name": name_cache.get(alert_data["device_id"], ""),
+                    "alert_type": alert_data["alert_type"],
+                    "severity": alert_data["severity"],
+                    "message": alert_data["message"],
+                    "timestamp": alert_data["timestamp"],
+                })
+            if alert_rows:
+                await asyncio.to_thread(
+                    lambda rows=alert_rows: supabase.table("alerts").insert(rows).execute()
+                )
     except Exception:
         logger.exception("Failed to sync ML alerts to Supabase")
 

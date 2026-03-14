@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .engines.telemetry import TelemetryGenerator
 from .engines.features import FeatureEngine
@@ -64,7 +64,7 @@ def separator(title=""):
 
 def main():
     separator("IoT SENTINEL — STANDALONE PIPELINE")
-    print(f"{DIM}Started at {datetime.utcnow().isoformat()}Z{RESET}")
+    print(f"{DIM}Started at {datetime.now(timezone.utc).isoformat()}Z{RESET}")
 
     generator = TelemetryGenerator(seed=42)
     feature_engine = FeatureEngine()
@@ -272,7 +272,7 @@ def main():
             print(f"  {idx+1:<8} {color_trust(s.trust_score):>18}  {color_risk(s.risk_level.value)}")
 
     separator("DONE")
-    print(f"{DIM}Completed at {datetime.utcnow().isoformat()}Z{RESET}\n")
+    print(f"{DIM}Completed at {datetime.now(timezone.utc).isoformat()}Z{RESET}\n")
 
 
 if __name__ == "__main__":
