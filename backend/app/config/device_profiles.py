@@ -1,0 +1,384 @@
+from app.models.telemetry import DeviceType, Protocol, DestinationType
+
+DEVICE_PROFILES = {
+    DeviceType.CAMERA: {
+        "id_prefix": "camera",
+        "count": 5,
+        "ip_range": "192.168.1.{i}",
+        "ip_start": 101,
+
+        "normal_protocols": [Protocol.RTSP, Protocol.HTTPS, Protocol.DNS, Protocol.NTP],
+        "suspicious_protocols": [Protocol.SSH, Protocol.TELNET, Protocol.FTP],
+
+        "bytes_sent": (30_000, 120_000),
+        "bytes_received": (500, 2_000),
+        "session_duration": (2.0, 10.0),
+        "packet_count": (200, 800),
+
+        "protocol_weights": {
+            Protocol.RTSP: 0.65,
+            Protocol.HTTPS: 0.20,
+            Protocol.DNS: 0.10,
+            Protocol.NTP: 0.05,
+        },
+
+        "normal_destinations": [DestinationType.INTERNAL, DestinationType.TRUSTED_CLOUD],
+        "destination_weights": {
+            DestinationType.INTERNAL: 0.80,
+            DestinationType.TRUSTED_CLOUD: 0.20,
+        },
+
+        "description": "IP cameras streaming to local NVR or cloud. High outbound, low inbound. Constant traffic pattern.",
+    },
+
+    DeviceType.PRINTER: {
+        "id_prefix": "printer",
+        "count": 3,
+        "ip_range": "192.168.1.{i}",
+        "ip_start": 201,
+
+        "normal_protocols": [Protocol.IPP, Protocol.HTTP, Protocol.HTTPS, Protocol.DNS, Protocol.MDNS],
+        "suspicious_protocols": [Protocol.SSH, Protocol.FTP],
+
+        "bytes_sent": (2_000, 10_000),
+        "bytes_received": (2_000, 15_000),
+        "session_duration": (1.0, 5.0),
+        "packet_count": (30, 120),
+
+        "protocol_weights": {
+            Protocol.IPP: 0.50,
+            Protocol.HTTP: 0.15,
+            Protocol.HTTPS: 0.15,
+            Protocol.DNS: 0.10,
+            Protocol.MDNS: 0.10,
+        },
+
+        "normal_destinations": [DestinationType.INTERNAL],
+        "destination_weights": {
+            DestinationType.INTERNAL: 0.95,
+            DestinationType.TRUSTED_CLOUD: 0.05,
+        },
+
+        "description": "Network printers. Low traffic, internal-only communication. Quiet unless actively printing.",
+    },
+
+    DeviceType.ROUTER: {
+        "id_prefix": "router",
+        "count": 2,
+        "ip_range": "192.168.1.{i}",
+        "ip_start": 1,
+
+        "normal_protocols": [Protocol.DHCP, Protocol.DNS, Protocol.NTP, Protocol.HTTPS],
+        "suspicious_protocols": [Protocol.TELNET, Protocol.FTP],
+
+        "bytes_sent": (300, 800),
+        "bytes_received": (300, 800),
+        "session_duration": (0.1, 1.0),
+        "packet_count": (10, 60),
+
+        "protocol_weights": {
+            Protocol.DHCP: 0.35,
+            Protocol.DNS: 0.35,
+            Protocol.NTP: 0.15,
+            Protocol.HTTPS: 0.15,
+        },
+
+        "normal_destinations": [DestinationType.INTERNAL, DestinationType.TRUSTED_CLOUD],
+        "destination_weights": {
+            DestinationType.INTERNAL: 0.70,
+            DestinationType.TRUSTED_CLOUD: 0.30,
+        },
+
+        "description": "Network routers handling DHCP/DNS. Short control sessions, many devices. Medium packet rate.",
+    },
+
+    DeviceType.LAPTOP: {
+        "id_prefix": "laptop",
+        "count": 4,
+        "ip_range": "192.168.1.{i}",
+        "ip_start": 50,
+
+        "normal_protocols": [Protocol.HTTPS, Protocol.SSH, Protocol.DNS, Protocol.WEBSOCKET, Protocol.TCP],
+        "suspicious_protocols": [Protocol.TELNET],
+
+        "bytes_sent": (5_000, 50_000),
+        "bytes_received": (10_000, 100_000),
+        "session_duration": (2.0, 20.0),
+        "packet_count": (100, 600),
+
+        "protocol_weights": {
+            Protocol.HTTPS: 0.50,
+            Protocol.DNS: 0.15,
+            Protocol.SSH: 0.10,
+            Protocol.WEBSOCKET: 0.10,
+            Protocol.TCP: 0.15,
+        },
+
+        "normal_destinations": [DestinationType.INTERNAL, DestinationType.TRUSTED_CLOUD, DestinationType.UNKNOWN_EXTERNAL],
+        "destination_weights": {
+            DestinationType.INTERNAL: 0.30,
+            DestinationType.TRUSTED_CLOUD: 0.55,
+            DestinationType.UNKNOWN_EXTERNAL: 0.15,
+        },
+
+        "description": "User laptops. Bursty diverse traffic. Mixed protocols, many destinations.",
+    },
+
+    DeviceType.SMART_TV: {
+        "id_prefix": "smart_tv",
+        "count": 3,
+        "ip_range": "192.168.1.{i}",
+        "ip_start": 150,
+
+        "normal_protocols": [Protocol.HTTPS, Protocol.DNS, Protocol.QUIC, Protocol.UDP],
+        "suspicious_protocols": [Protocol.SSH, Protocol.TELNET, Protocol.FTP],
+
+        "bytes_sent": (2_000, 8_000),
+        "bytes_received": (50_000, 500_000),
+        "session_duration": (5.0, 60.0),
+        "packet_count": (300, 1_200),
+
+        "protocol_weights": {
+            Protocol.HTTPS: 0.40,
+            Protocol.QUIC: 0.25,
+            Protocol.UDP: 0.20,
+            Protocol.DNS: 0.15,
+        },
+
+        "normal_destinations": [DestinationType.TRUSTED_CLOUD],
+        "destination_weights": {
+            DestinationType.INTERNAL: 0.10,
+            DestinationType.TRUSTED_CLOUD: 0.85,
+            DestinationType.UNKNOWN_EXTERNAL: 0.05,
+        },
+
+        "description": "Smart TVs streaming content. High inbound traffic, low outbound. Connects to streaming services.",
+    },
+
+    DeviceType.THERMOSTAT: {
+        "id_prefix": "thermostat",
+        "count": 2,
+        "ip_range": "192.168.1.{i}",
+        "ip_start": 170,
+
+        "normal_protocols": [Protocol.MQTT, Protocol.HTTPS, Protocol.DNS, Protocol.NTP],
+        "suspicious_protocols": [Protocol.SSH, Protocol.TELNET, Protocol.FTP],
+
+        "bytes_sent": (200, 2_000),
+        "bytes_received": (200, 1_500),
+        "session_duration": (0.5, 3.0),
+        "packet_count": (5, 30),
+
+        "protocol_weights": {
+            Protocol.MQTT: 0.55,
+            Protocol.HTTPS: 0.20,
+            Protocol.DNS: 0.15,
+            Protocol.NTP: 0.10,
+        },
+
+        "normal_destinations": [DestinationType.INTERNAL, DestinationType.TRUSTED_CLOUD],
+        "destination_weights": {
+            DestinationType.INTERNAL: 0.60,
+            DestinationType.TRUSTED_CLOUD: 0.40,
+        },
+
+        "description": "Smart thermostats reporting temp via MQTT. Very low bandwidth, periodic telemetry bursts.",
+    },
+
+    DeviceType.SMART_DOOR_LOCK: {
+        "id_prefix": "door_lock",
+        "count": 2,
+        "ip_range": "192.168.1.{i}",
+        "ip_start": 180,
+
+        "normal_protocols": [Protocol.MQTT, Protocol.HTTPS, Protocol.COAP, Protocol.DNS],
+        "suspicious_protocols": [Protocol.SSH, Protocol.TELNET, Protocol.FTP],
+
+        "bytes_sent": (100, 800),
+        "bytes_received": (100, 600),
+        "session_duration": (0.2, 2.0),
+        "packet_count": (3, 20),
+
+        "protocol_weights": {
+            Protocol.MQTT: 0.40,
+            Protocol.HTTPS: 0.25,
+            Protocol.COAP: 0.20,
+            Protocol.DNS: 0.15,
+        },
+
+        "normal_destinations": [DestinationType.INTERNAL, DestinationType.TRUSTED_CLOUD],
+        "destination_weights": {
+            DestinationType.INTERNAL: 0.75,
+            DestinationType.TRUSTED_CLOUD: 0.25,
+        },
+
+        "description": "Smart door locks. Minimal traffic — lock/unlock events and status pings. Extremely low volume.",
+    },
+
+    DeviceType.SMART_LIGHT_HUB: {
+        "id_prefix": "light_hub",
+        "count": 2,
+        "ip_range": "192.168.1.{i}",
+        "ip_start": 190,
+
+        "normal_protocols": [Protocol.ZIGBEE, Protocol.MQTT, Protocol.HTTPS, Protocol.DNS],
+        "suspicious_protocols": [Protocol.SSH, Protocol.TELNET, Protocol.FTP],
+
+        "bytes_sent": (300, 3_000),
+        "bytes_received": (200, 2_000),
+        "session_duration": (0.3, 4.0),
+        "packet_count": (10, 50),
+
+        "protocol_weights": {
+            Protocol.ZIGBEE: 0.35,
+            Protocol.MQTT: 0.30,
+            Protocol.HTTPS: 0.20,
+            Protocol.DNS: 0.15,
+        },
+
+        "normal_destinations": [DestinationType.INTERNAL, DestinationType.TRUSTED_CLOUD],
+        "destination_weights": {
+            DestinationType.INTERNAL: 0.80,
+            DestinationType.TRUSTED_CLOUD: 0.20,
+        },
+
+        "description": "Smart lighting hubs bridging Zigbee to IP. Low volume, mostly local mesh coordination.",
+    },
+
+    DeviceType.TEMPERATURE_SENSOR: {
+        "id_prefix": "temp_sensor",
+        "count": 3,
+        "ip_range": "192.168.1.{i}",
+        "ip_start": 210,
+
+        "normal_protocols": [Protocol.COAP, Protocol.MQTT, Protocol.DNS],
+        "suspicious_protocols": [Protocol.SSH, Protocol.TELNET, Protocol.FTP, Protocol.HTTPS],
+
+        "bytes_sent": (50, 500),
+        "bytes_received": (50, 300),
+        "session_duration": (0.1, 1.0),
+        "packet_count": (2, 15),
+
+        "protocol_weights": {
+            Protocol.COAP: 0.50,
+            Protocol.MQTT: 0.35,
+            Protocol.DNS: 0.15,
+        },
+
+        "normal_destinations": [DestinationType.INTERNAL],
+        "destination_weights": {
+            DestinationType.INTERNAL: 0.95,
+            DestinationType.TRUSTED_CLOUD: 0.05,
+        },
+
+        "description": "Bare-metal temp sensors. Tiny payloads via CoAP/MQTT, internal-only. Lowest bandwidth devices.",
+    },
+
+    DeviceType.NETWORK_GATEWAY: {
+        "id_prefix": "gateway",
+        "count": 1,
+        "ip_range": "192.168.1.{i}",
+        "ip_start": 254,
+
+        "normal_protocols": [Protocol.DHCP, Protocol.DNS, Protocol.NTP, Protocol.HTTPS, Protocol.MQTT],
+        "suspicious_protocols": [Protocol.TELNET, Protocol.FTP],
+
+        "bytes_sent": (1_000, 5_000),
+        "bytes_received": (1_000, 5_000),
+        "session_duration": (0.2, 2.0),
+        "packet_count": (20, 100),
+
+        "protocol_weights": {
+            Protocol.DHCP: 0.20,
+            Protocol.DNS: 0.25,
+            Protocol.NTP: 0.10,
+            Protocol.HTTPS: 0.20,
+            Protocol.MQTT: 0.25,
+        },
+
+        "normal_destinations": [DestinationType.INTERNAL, DestinationType.TRUSTED_CLOUD],
+        "destination_weights": {
+            DestinationType.INTERNAL: 0.65,
+            DestinationType.TRUSTED_CLOUD: 0.35,
+        },
+
+        "description": "IoT edge gateway aggregating sensor data. Balanced bidirectional traffic. Bridge between LAN and cloud.",
+    },
+}
+
+
+DESTINATION_IP_POOLS = {
+    DestinationType.INTERNAL: [
+        "192.168.1.1", "192.168.1.2", "192.168.1.10",
+        "192.168.1.20", "192.168.1.50", "192.168.1.100",
+    ],
+    DestinationType.TRUSTED_CLOUD: [
+        "34.120.50.12", "52.94.236.248", "104.16.51.111",
+        "142.250.80.46", "13.107.42.14", "151.101.1.69",
+    ],
+    DestinationType.UNKNOWN_EXTERNAL: [
+        "45.33.32.156", "185.220.101.34", "91.219.236.222",
+        "23.129.64.100", "198.51.100.77", "203.0.113.42",
+    ],
+}
+
+
+ATTACK_PROFILES = {
+    "backdoor": {
+        "description": "Backdoor C2 communication — device opens SSH/Telnet to unknown external IP",
+        "protocol_override": Protocol.SSH,
+        "destination_override": DestinationType.UNKNOWN_EXTERNAL,
+        "bytes_sent_multiplier": 3.0,
+        "bytes_received_multiplier": 1.5,
+        "session_duration_override": (10.0, 30.0),
+        "applicable_devices": [DeviceType.CAMERA, DeviceType.PRINTER, DeviceType.SMART_TV, DeviceType.THERMOSTAT, DeviceType.SMART_DOOR_LOCK],
+    },
+    "data_exfiltration": {
+        "description": "Large data transfer to external destination via FTP",
+        "protocol_override": Protocol.FTP,
+        "destination_override": DestinationType.UNKNOWN_EXTERNAL,
+        "bytes_sent_multiplier": 10.0,
+        "bytes_received_multiplier": 0.5,
+        "session_duration_override": (15.0, 60.0),
+        "applicable_devices": [DeviceType.PRINTER, DeviceType.LAPTOP, DeviceType.CAMERA, DeviceType.NETWORK_GATEWAY],
+    },
+    "traffic_spike": {
+        "description": "Sudden massive increase in traffic volume — possible DDoS participation",
+        "protocol_override": Protocol.UDP,
+        "destination_override": DestinationType.UNKNOWN_EXTERNAL,
+        "bytes_sent_multiplier": 15.0,
+        "bytes_received_multiplier": 0.2,
+        "session_duration_override": (1.0, 5.0),
+        "packet_count_multiplier": 20.0,
+        "applicable_devices": [DeviceType.SMART_TV, DeviceType.CAMERA, DeviceType.ROUTER, DeviceType.SMART_LIGHT_HUB, DeviceType.THERMOSTAT],
+    },
+    "protocol_misuse": {
+        "description": "Device uses protocol it should never use — policy violation",
+        "protocol_override": Protocol.TELNET,
+        "destination_override": DestinationType.UNKNOWN_EXTERNAL,
+        "bytes_sent_multiplier": 2.0,
+        "bytes_received_multiplier": 2.0,
+        "session_duration_override": (5.0, 20.0),
+        "applicable_devices": [DeviceType.CAMERA, DeviceType.PRINTER, DeviceType.SMART_TV, DeviceType.TEMPERATURE_SENSOR, DeviceType.SMART_DOOR_LOCK],
+    },
+    "botnet": {
+        "description": "Botnet recruitment — high-volume UDP floods to multiple external targets",
+        "protocol_override": Protocol.UDP,
+        "destination_override": DestinationType.UNKNOWN_EXTERNAL,
+        "bytes_sent_multiplier": 20.0,
+        "bytes_received_multiplier": 0.1,
+        "session_duration_override": (0.5, 3.0),
+        "packet_count_multiplier": 50.0,
+        "applicable_devices": [DeviceType.CAMERA, DeviceType.SMART_TV, DeviceType.ROUTER, DeviceType.PRINTER, DeviceType.THERMOSTAT, DeviceType.SMART_LIGHT_HUB],
+    },
+    "lateral_movement": {
+        "description": "Attacker scanning internal network — new internal destinations via SSH/Telnet",
+        "protocol_override": Protocol.SSH,
+        "destination_override": DestinationType.INTERNAL,
+        "bytes_sent_multiplier": 4.0,
+        "bytes_received_multiplier": 3.0,
+        "session_duration_override": (2.0, 15.0),
+        "packet_count_multiplier": 5.0,
+        "applicable_devices": [DeviceType.LAPTOP, DeviceType.ROUTER, DeviceType.CAMERA, DeviceType.SMART_TV, DeviceType.NETWORK_GATEWAY],
+    },
+}
