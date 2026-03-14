@@ -36,7 +36,7 @@ export default function LandingPage() {
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-6 pb-12 pt-8 sm:px-10 lg:px-16">
         <header className="lp-reveal flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img src="/img.png" alt="Sentinel" className="h-8" />
+            <img src="/logo.png" alt="Sentinel" className="h-8" />
             <p className="font-(--font-syne) text-sm tracking-[0.25em] text-white/70 uppercase">
               Sentinel
             </p>

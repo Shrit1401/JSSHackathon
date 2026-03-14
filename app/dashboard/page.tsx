@@ -1072,14 +1072,12 @@ function TopToolbar({
       }}
     >
       <div className="pointer-events-auto flex items-center gap-4 rounded-2xl border border-white/10 bg-zinc-950/40 px-4 py-2.5 shadow-[0_10px_30px_rgba(0,0,0,0.5)] backdrop-blur-md">
-        <div className="flex items-center gap-2.5">
-          <div className="grid size-8 place-items-center rounded-xl border border-white/10 bg-zinc-900/50">
-            <Shield className="size-4 text-cyan-200" />
+      <div className="flex items-center gap-3">
+            <img src="/logo.png" alt="Sentinel" className="h-8" />
+            <p className="font-(--font-syne) text-sm tracking-[0.25em] text-white/70 uppercase">
+              Sentinel
+            </p>
           </div>
-          <div className="text-sm font-semibold tracking-tight text-zinc-50">
-            Cyber Canvas
-          </div>
-        </div>
 
         <div className="flex items-center gap-3.5 text-[13px]">
           <div className="flex items-baseline gap-1.5">
