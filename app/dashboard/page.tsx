@@ -52,6 +52,7 @@ import type {
   DeviceSummary,
   NetworkMap,
   DeviceDetail as APIDeviceDetail,
+  DeviceProfile,
 } from "@/lib/api-types"
 
 function clamp(n: number, min: number, max: number) {
@@ -1147,11 +1148,13 @@ function DetailPanel({
   node,
   alerts,
   deviceDetail,
+  deviceProfile,
   onClose,
 }: {
   node: Node<DeviceNodeData> | null
   alerts: AlertItem[]
   deviceDetail: APIDeviceDetail | null
+  deviceProfile: DeviceProfile | null
   onClose: () => void
 }) {
   return (
@@ -1444,44 +1447,83 @@ function DetailPanel({
                   Security explanation
                 </div>
                 <div className="mt-1 text-[12px] leading-5 text-zinc-400">
-                  {deviceDetail?.security_explanation ??
+                  {deviceProfile?.security_explanation ??
+                    deviceDetail?.security_explanation ??
                     "Trust is derived from behavior, policy compliance, and anomaly detection. Simulations inject suspicious patterns; connections and risk indicators update immediately on the canvas."}
                 </div>
               </div>
 
-              {deviceDetail && (
-                <div className="rounded-xl border border-white/10 bg-zinc-900/20 p-3">
-                  <div className="text-xs font-medium text-zinc-200">
-                    Device info
+              {deviceProfile && deviceProfile.applicable_attacks.length > 0 && (
+                <div className="rounded-xl border border-orange-400/20 bg-orange-500/5 p-3">
+                  <div className="text-xs font-medium text-orange-200">
+                    Applicable attacks
                   </div>
-                  <div className="mt-1.5 grid grid-cols-2 gap-2 text-[11px]">
-                    <div>
-                      <span className="text-zinc-500">IP</span>
-                      <div className="mt-0.5 tabular-nums text-zinc-200">
-                        {deviceDetail.ip_address}
-                      </div>
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">Vendor</span>
-                      <div className="mt-0.5 text-zinc-200">
-                        {deviceDetail.vendor}
-                      </div>
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">Status</span>
-                      <div className="mt-0.5 text-zinc-200 capitalize">
-                        {deviceDetail.status}
-                      </div>
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">Traffic</span>
-                      <div className="mt-0.5 tabular-nums text-zinc-200">
-                        {deviceDetail.traffic_rate.toFixed(1)} MB/s
-                      </div>
-                    </div>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {deviceProfile.applicable_attacks.map((attack) => (
+                      <span
+                        key={attack}
+                        className="rounded-md border border-orange-400/20 bg-orange-500/10 px-2 py-0.5 text-[11px] text-orange-300"
+                      >
+                        {attack.replace(/_/g, " ")}
+                      </span>
+                    ))}
                   </div>
                 </div>
               )}
+
+              {(deviceProfile || deviceDetail) && (() => {
+                const src = deviceProfile ?? deviceDetail
+                if (!src) return null
+                return (
+                  <div className="rounded-xl border border-white/10 bg-zinc-900/20 p-3">
+                    <div className="text-xs font-medium text-zinc-200">
+                      Device info
+                    </div>
+                    <div className="mt-1.5 grid grid-cols-2 gap-2 text-[11px]">
+                      <div>
+                        <span className="text-zinc-500">IP</span>
+                        <div className="mt-0.5 tabular-nums text-zinc-200">
+                          {src.ip_address}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-zinc-500">Vendor</span>
+                        <div className="mt-0.5 text-zinc-200">
+                          {src.vendor}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-zinc-500">Status</span>
+                        <div className="mt-0.5 text-zinc-200 capitalize">
+                          {src.status}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-zinc-500">Traffic</span>
+                        <div className="mt-0.5 tabular-nums text-zinc-200">
+                          {src.traffic_rate.toFixed(1)} MB/s
+                        </div>
+                      </div>
+                      {deviceProfile?.last_seen && (
+                        <div>
+                          <span className="text-zinc-500">Last seen</span>
+                          <div className="mt-0.5 text-zinc-200">
+                            {new Date(deviceProfile.last_seen).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                          </div>
+                        </div>
+                      )}
+                      {deviceProfile?.created_at && (
+                        <div>
+                          <span className="text-zinc-500">Registered</span>
+                          <div className="mt-0.5 text-zinc-200">
+                            {new Date(deviceProfile.created_at).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
             </CardContent>
           </Card>
         </motion.div>
@@ -2027,6 +2069,7 @@ function CanvasInner() {
   const [alerts, setAlerts] = React.useState<AlertItem[]>([])
   const [pulse, setPulse] = React.useState<Record<string, number>>({})
   const [deviceDetail, setDeviceDetail] = React.useState<APIDeviceDetail | null>(null)
+  const [deviceProfile, setDeviceProfile] = React.useState<DeviceProfile | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [useMock, setUseMock] = React.useState(false)
   const [addDeviceOpen, setAddDeviceOpen] = React.useState(false)
@@ -2160,15 +2203,18 @@ function CanvasInner() {
   React.useEffect(() => {
     if (!selectedId || useMock) {
       setDeviceDetail(null)
+      setDeviceProfile(null)
       return
     }
     let cancelled = false
-    api
-      .device(selectedId)
-      .then((detail) => {
-        if (!cancelled) setDeviceDetail(detail)
-      })
-      .catch(() => setDeviceDetail(null))
+    Promise.all([
+      api.device(selectedId).catch(() => null),
+      api.deviceProfile(selectedId).catch(() => null),
+    ]).then(([detail, profile]) => {
+      if (cancelled) return
+      setDeviceDetail(detail)
+      setDeviceProfile(profile)
+    })
     return () => {
       cancelled = true
     }
@@ -2388,6 +2434,7 @@ function CanvasInner() {
       setAlerts([])
       setSelectedId(null)
       setDeviceDetail(null)
+      setDeviceProfile(null)
     } catch (err) {
       console.error("Reset network failed:", err)
     } finally {
@@ -2444,7 +2491,7 @@ function CanvasInner() {
         onResetNetwork={resetNetwork}
         resetting={resetting}
       />
-      <DetailPanel node={selectedNode} alerts={alerts} deviceDetail={deviceDetail} onClose={() => setSelectedId(null)} />
+      <DetailPanel node={selectedNode} alerts={alerts} deviceDetail={deviceDetail} deviceProfile={deviceProfile} onClose={() => setSelectedId(null)} />
       <LeastTrustedPanel
         nodes={nodes}
         visible={!selectedNode}

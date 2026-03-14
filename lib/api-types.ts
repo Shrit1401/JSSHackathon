@@ -131,3 +131,26 @@ export interface ResetNetworkResponse {
   message: string
   devices_reset: number
 }
+
+export interface DeviceProfile {
+  id: string
+  name: string
+  device_type: string
+  ip_address: string
+  vendor: string
+  trust_score: number
+  risk_level: RiskLevelAPI
+  traffic_rate: number
+  status: DeviceStatus
+  last_seen: string
+  created_at: string
+  profile: Record<string, unknown> | null
+  baseline: Record<string, unknown> | null
+  drift: Record<string, unknown> | null
+  policy: Record<string, unknown> | null
+  anomaly: Record<string, unknown> | null
+  trust: Record<string, unknown> | null
+  protection: Record<string, unknown> | null
+  applicable_attacks: string[]
+  security_explanation: string
+}

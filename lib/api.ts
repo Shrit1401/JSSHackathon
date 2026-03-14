@@ -3,6 +3,7 @@ import type {
   AddDeviceResponse,
   AlertOut,
   DeviceDetail,
+  DeviceProfile,
   DeviceSummary,
   EventOut,
   ExplainResponse,
@@ -36,6 +37,8 @@ export const api = {
   devices: () => request<DeviceSummary[]>("/devices"),
 
   device: (id: string) => request<DeviceDetail>(`/devices/${id}`),
+
+  deviceProfile: (id: string) => request<DeviceProfile>(`/devices/${id}/profile`),
 
   explain: (id: string) => request<ExplainResponse>(`/devices/${id}/explain`),
 
