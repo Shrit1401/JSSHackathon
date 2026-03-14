@@ -32,6 +32,64 @@ BACKDOOR_PRESETS = {
 }
 
 
+async def _post_attack_background(
+    device: dict,
+    device_id: str,
+    attack_type: str,
+    old_trust: int,
+    new_trust: int,
+    old_risk: str,
+    new_risk: str,
+) -> None:
+    try:
+        ml_alerts = await asyncio.to_thread(pipeline.get_new_alerts)
+        for alert_data in ml_alerts[:5]:
+            if alert_data["device_id"] == device_id:
+                ml_payload = {
+                    "device_id": device_id,
+                    "device_name": device["name"],
+                    "alert_type": alert_data["alert_type"],
+                    "severity": alert_data["severity"],
+                    "message": alert_data["message"],
+                    "timestamp": alert_data["timestamp"],
+                }
+                await asyncio.to_thread(
+                    lambda p=ml_payload: supabase.table("alerts").insert(p).execute()
+                )
+    except Exception:
+        logger.exception("background — ML alert insert failed for %s", device_id)
+
+    breakdown_info = ""
+    detail = pipeline.get_device_trust_detail(device_id)
+    if detail:
+        breakdown_info = (
+            f" ML anomaly={detail['ml_anomaly_score']:.2f},"
+            f" drift={detail['drift_score']:.2f},"
+            f" policy_violations={detail['policy_violations_total']},"
+            f" total_penalty={detail['total_penalty']:.1f}"
+        )
+    logger.info(
+        "ml-attack  device=%-20s  type=%-20s  trust=%d→%d  risk=%s→%s%s",
+        device["name"], attack_type, old_trust, new_trust,
+        old_risk, new_risk, breakdown_info,
+    )
+
+    if new_risk == "COMPROMISED":
+        try:
+            await asyncio.to_thread(
+                lambda: send_attack_evidence_card(
+                    device=device,
+                    attack_type=attack_type,
+                    old_trust=old_trust,
+                    new_trust=new_trust,
+                    old_risk=old_risk,
+                    new_risk=new_risk,
+                )
+            )
+        except Exception:
+            logger.exception("background — WhatsApp send failed for %s", device["name"])
+
+
 async def _run_ml_attack(
     device_id: str,
     attack_type: str,
@@ -111,57 +169,11 @@ async def _run_ml_attack(
         await asyncio.to_thread(
             lambda: supabase.table("alerts").insert(payload).execute()
         )
-
-        ml_alerts = await asyncio.to_thread(pipeline.get_new_alerts)
-        for alert_data in ml_alerts[:5]:
-            if alert_data["device_id"] == device_id:
-                ml_payload = {
-                    "device_id": device_id,
-                    "device_name": device["name"],
-                    "alert_type": alert_data["alert_type"],
-                    "severity": alert_data["severity"],
-                    "message": alert_data["message"],
-                    "timestamp": alert_data["timestamp"],
-                }
-                await asyncio.to_thread(
-                    lambda p=ml_payload: supabase.table("alerts").insert(p).execute()
-                )
     except Exception:
-        logger.exception("attack simulation — alert insert failed (non-fatal)")
+        logger.exception("attack simulation — primary alert insert failed (non-fatal)")
         alert_created = False
 
-    breakdown_info = ""
-    detail = pipeline.get_device_trust_detail(device_id)
-    if detail:
-        breakdown_info = (
-            f" ML anomaly={detail['ml_anomaly_score']:.2f},"
-            f" drift={detail['drift_score']:.2f},"
-            f" policy_violations={detail['policy_violations_total']},"
-            f" total_penalty={detail['total_penalty']:.1f}"
-        )
-
-    logger.info(
-        "ml-attack  device=%-20s  type=%-20s  trust=%d→%d  risk=%s→%s  alert=%s%s",
-        device["name"], attack_type, old_trust, new_trust,
-        old_risk, new_risk, alert_created, breakdown_info,
-    )
-
-    if new_risk == "COMPROMISED":
-        try:
-            await asyncio.to_thread(
-                lambda: send_attack_evidence_card(
-                    device=device,
-                    attack_type=attack_type,
-                    old_trust=old_trust,
-                    new_trust=new_trust,
-                    old_risk=old_risk,
-                    new_risk=new_risk,
-                )
-            )
-        except Exception:
-            logger.exception("Failed to send WhatsApp evidence card for %s", device["name"])
-
-    return SimulateAttackResponse(
+    response = SimulateAttackResponse(
         device_id=device_id,
         attack_type=attack_type,
         old_trust_score=old_trust,
@@ -176,6 +188,18 @@ async def _run_ml_attack(
         ),
         detection_difficulty=detection_difficulty,
     )
+
+    asyncio.create_task(_post_attack_background(
+        device=device,
+        device_id=device_id,
+        attack_type=attack_type,
+        old_trust=old_trust,
+        new_trust=new_trust,
+        old_risk=old_risk,
+        new_risk=new_risk,
+    ))
+
+    return response
 
 
 @router.post(

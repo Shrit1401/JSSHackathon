@@ -59,6 +59,29 @@ async def initialize_ml_pipeline() -> None:
         logger.exception("ML pipeline initialization failed — falling back to simple mode")
 
 
+async def _send_compromise_whatsapp(supa_id: str, trust: int, risk: str) -> None:
+    try:
+        dev_result = await asyncio.to_thread(
+            lambda did=supa_id: supabase.table("devices")
+            .select("name,device_type")
+            .eq("id", did)
+            .limit(1)
+            .execute()
+        )
+        dev_row = dev_result.data[0] if dev_result.data else {}
+        await asyncio.to_thread(
+            lambda: send_compromise_alert(
+                device_name=dev_row.get("name", "Unknown"),
+                device_id=supa_id,
+                device_type=dev_row.get("device_type", "unknown"),
+                trust_score=trust,
+                risk_level=risk,
+            )
+        )
+    except Exception:
+        logger.exception("background — WhatsApp send failed for %s", supa_id)
+
+
 async def run_simulation_tick() -> None:
     if not pipeline.is_trained:
         return
@@ -96,26 +119,7 @@ async def run_simulation_tick() -> None:
             logger.exception("Failed to sync trust for device %s", supa_id)
 
     for supa_id, trust, risk in compromised_devices:
-        try:
-            dev_result = await asyncio.to_thread(
-                lambda did=supa_id: supabase.table("devices")
-                .select("name,device_type")
-                .eq("id", did)
-                .limit(1)
-                .execute()
-            )
-            dev_row = dev_result.data[0] if dev_result.data else {}
-            await asyncio.to_thread(
-                lambda: send_compromise_alert(
-                    device_name=dev_row.get("name", "Unknown"),
-                    device_id=supa_id,
-                    device_type=dev_row.get("device_type", "unknown"),
-                    trust_score=trust,
-                    risk_level=risk,
-                )
-            )
-        except Exception:
-            logger.exception("Failed to send WhatsApp evidence card for %s", supa_id)
+        asyncio.create_task(_send_compromise_whatsapp(supa_id, trust, risk))
 
     try:
         new_alerts = await asyncio.to_thread(pipeline.get_new_alerts)
