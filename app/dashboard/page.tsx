@@ -896,9 +896,9 @@ function SimulateModal({
   async function handleSubmit() {
     if (!selectedDevice || selectedAttacks.size === 0) return
     setSubmitting(true)
-    for (const attack of selectedAttacks) {
+    const attacks = [...selectedAttacks]
+    for (const attack of attacks) {
       onSimulate(attack, selectedDevice, attack === "backdoor" ? stealthLevel : undefined)
-      await new Promise((r) => setTimeout(r, 300))
     }
     setSubmitting(false)
     reset()
@@ -2236,85 +2236,84 @@ function CanvasInner() {
     setPulse((prev) => ({ ...prev, [nodeId]: Date.now() }))
   }, [])
 
-  const applyTrustDelta = React.useCallback(
-    (nodeId: string, delta: number, event: string) => {
-      setNodes((prev) =>
-        prev.map((n) => {
-          if (n.id !== nodeId) return n
-          const nextTrust = clamp(n.data.trustScore + delta, 0, 100)
-          const nextRisk = riskFromTrust(nextTrust)
+  const syncEdgesFromNodes = React.useCallback(
+    (updatedNodes: Node<DeviceNodeData>[]) => {
+      const riskByNode = new Map(updatedNodes.map((n) => [n.id, n.data.risk] as const))
+
+      setEdges((prev) => {
+        const adjacency = new Map<string, string[]>()
+        prev.forEach((e) => {
+          if (!adjacency.has(e.source)) adjacency.set(e.source, [])
+          adjacency.get(e.source)!.push(e.target)
+        })
+
+        const propagated = new Map<string, RiskLevel>()
+        riskByNode.forEach((risk, id) => propagated.set(id, risk))
+
+        const queue = [...propagated.entries()].filter(
+          ([, r]) => r === "compromised" || r === "suspicious"
+        )
+        const visited = new Set<string>()
+        for (const [id] of queue) visited.add(id)
+
+        while (queue.length) {
+          const [parentId, parentRisk] = queue.shift()!
+          const children = adjacency.get(parentId) ?? []
+          for (const childId of children) {
+            if (visited.has(childId)) continue
+            const childOwnRisk = riskByNode.get(childId) ?? "safe"
+            if (childOwnRisk === "safe" && parentRisk !== "safe") {
+              propagated.set(childId, parentRisk)
+              visited.add(childId)
+              queue.push([childId, parentRisk])
+            }
+          }
+        }
+
+        return prev.map((e) => {
+          const src = propagated.get(e.source) ?? "safe"
+          const dst = propagated.get(e.target) ?? "safe"
+          const worst: RiskLevel =
+            src === "compromised" || dst === "compromised"
+              ? "compromised"
+              : src === "suspicious" || dst === "suspicious"
+                ? "suspicious"
+                : "safe"
           return {
-            ...n,
+            ...e,
             data: {
-              ...n.data,
-              trustScore: nextTrust,
-              risk: nextRisk,
-              lastEvent: event,
-              trustHistory: [...n.data.trustHistory, nowSeriesPoint(nextTrust)].slice(-24),
+              ...(e.data ?? {}),
+              status: edgeStatusFromRisk(worst),
             },
           }
         })
-      )
+      })
     },
-    [setNodes]
+    [setEdges]
   )
 
-  const updateConnectedEdges = React.useCallback(() => {
-    const riskByNode = new Map(nodes.map((n) => [n.id, n.data.risk] as const))
-
-    setEdges((prev) => {
-      const adjacency = new Map<string, string[]>()
-      prev.forEach((e) => {
-        if (!adjacency.has(e.source)) adjacency.set(e.source, [])
-        adjacency.get(e.source)!.push(e.target)
-      })
-
-      const propagated = new Map<string, RiskLevel>()
-      riskByNode.forEach((risk, id) => propagated.set(id, risk))
-
-      const queue = [...propagated.entries()].filter(
-        ([, r]) => r === "compromised" || r === "suspicious"
-      )
-      const visited = new Set<string>()
-      for (const [id] of queue) visited.add(id)
-
-      while (queue.length) {
-        const [parentId, parentRisk] = queue.shift()!
-        const children = adjacency.get(parentId) ?? []
-        for (const childId of children) {
-          if (visited.has(childId)) continue
-          const childOwnRisk = riskByNode.get(childId) ?? "safe"
-          if (childOwnRisk === "safe" && parentRisk !== "safe") {
-            propagated.set(childId, parentRisk)
-            visited.add(childId)
-            queue.push([childId, parentRisk])
-          }
-        }
-      }
-
-      return prev.map((e) => {
-        const src = propagated.get(e.source) ?? "safe"
-        const dst = propagated.get(e.target) ?? "safe"
-        const worst: RiskLevel =
-          src === "compromised" || dst === "compromised"
-            ? "compromised"
-            : src === "suspicious" || dst === "suspicious"
-              ? "suspicious"
-              : "safe"
+  const applyTrustDelta = React.useCallback(
+    (nodeId: string, delta: number, event: string) => {
+      const updatedNodes = nodesRef.current.map((n) => {
+        if (n.id !== nodeId) return n
+        const nextTrust = clamp(n.data.trustScore + delta, 0, 100)
+        const nextRisk = riskFromTrust(nextTrust)
         return {
-          ...e,
+          ...n,
           data: {
-            ...(e.data ?? {}),
-            status: edgeStatusFromRisk(worst),
+            ...n.data,
+            trustScore: nextTrust,
+            risk: nextRisk,
+            lastEvent: event,
+            trustHistory: [...n.data.trustHistory, nowSeriesPoint(nextTrust)].slice(-24),
           },
         }
       })
-    })
-  }, [nodes, setEdges])
-
-  React.useEffect(() => {
-    updateConnectedEdges()
-  }, [updateConnectedEdges])
+      setNodes(updatedNodes)
+      syncEdgesFromNodes(updatedNodes)
+    },
+    [setNodes, syncEdgesFromNodes]
+  )
 
   const deviceOptions: DeviceOption[] = React.useMemo(
     () =>
@@ -2358,6 +2357,19 @@ function CanvasInner() {
         return
       }
 
+      const optimisticPenalty = -(Math.floor(Math.random() * 21) + 40)
+      const optimisticDeltas: Record<SimulationType, { title: string; desc: string; event: string }> = {
+        backdoor: { title: "Backdoor behavior pattern", desc: `${target.data.name} exhibited persistence + beaconing indicators.`, event: "Backdoor simulation: persistence indicators detected" },
+        traffic_spike: { title: "Traffic anomaly detected", desc: `${target.data.name} burst traffic signature observed.`, event: "Traffic spike simulation: anomaly score increased" },
+        exfil: { title: "Possible data exfiltration", desc: `${target.data.name} shows high outbound volume to unknown host.`, event: "Exfiltration simulation: outbound risk elevated" },
+        malware: { title: "Malware indicators", desc: `${target.data.name} triggered malicious process heuristics.`, event: "Malware simulation: behavior heuristic triggered" },
+      }
+      const od = optimisticDeltas[type]
+      const optimisticTrust = clamp(target.data.trustScore + optimisticPenalty, 0, 100)
+      const optimisticSev = riskFromTrust(optimisticTrust)
+      pushAlert({ title: od.title, description: od.desc, severity: optimisticSev, nodeId: target.id })
+      applyTrustDelta(target.id, optimisticPenalty, od.event)
+
       try {
         let response
         if (type === "backdoor") {
@@ -2370,56 +2382,44 @@ function CanvasInner() {
           response = await api.simulateAttack({ device_id: target.id })
         }
 
-        setNodes((prev) =>
-          prev.map((n) => {
-            if (n.id !== response.device_id) return n
-            const newTrust = response.new_trust_score
-            const newRisk = mapRiskLevel(response.new_risk_level)
-            return {
-              ...n,
-              data: {
-                ...n.data,
-                trustScore: newTrust,
-                risk: newRisk,
-                lastEvent: response.message,
-                trustHistory: [
-                  ...n.data.trustHistory,
-                  nowSeriesPoint(newTrust),
-                ].slice(-24),
-              },
-            }
-          })
-        )
-
-        pushAlert({
-          title: response.attack_type.replace(/_/g, " "),
-          description: response.message,
-          severity: mapRiskLevel(response.new_risk_level),
-          nodeId: response.device_id,
-          ...(response.detection_difficulty != null ? { detectionDifficulty: response.detection_difficulty } : {}),
+        const updatedNodes = nodesRef.current.map((n) => {
+          if (n.id !== response.device_id) return n
+          const newTrust = response.new_trust_score
+          const newRisk = mapRiskLevel(response.new_risk_level)
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              trustScore: newTrust,
+              risk: newRisk,
+              lastEvent: response.message,
+              trustHistory: [
+                ...n.data.trustHistory,
+                nowSeriesPoint(newTrust),
+              ].slice(-24),
+            },
+          }
         })
+        setNodes(updatedNodes)
+        syncEdgesFromNodes(updatedNodes)
+
+        if (response.detection_difficulty != null) {
+          setAlerts((prev) => {
+            const copy = [...prev]
+            if (copy.length > 0) copy[0] = { ...copy[0], detectionDifficulty: response.detection_difficulty }
+            return copy
+          })
+        }
 
         try {
           const apiAlerts = await api.alerts()
           setAlerts(apiAlerts.map(mapAlertFromAPI))
         } catch {}
       } catch (err) {
-        console.error("API simulation failed, falling back to local:", err)
-        const penalty = -(Math.floor(Math.random() * 21) + 40)
-        const deltas: Record<SimulationType, { title: string; desc: string; event: string }> = {
-          backdoor: { title: "Backdoor behavior pattern", desc: `${target.data.name} exhibited persistence + beaconing indicators.`, event: "Backdoor simulation: persistence indicators detected" },
-          traffic_spike: { title: "Traffic anomaly detected", desc: `${target.data.name} burst traffic signature observed.`, event: "Traffic spike simulation: anomaly score increased" },
-          exfil: { title: "Possible data exfiltration", desc: `${target.data.name} shows high outbound volume to unknown host.`, event: "Exfiltration simulation: outbound risk elevated" },
-          malware: { title: "Malware indicators", desc: `${target.data.name} triggered malicious process heuristics.`, event: "Malware simulation: behavior heuristic triggered" },
-        }
-        const d = deltas[type]
-        const newTrust = clamp(target.data.trustScore + penalty, 0, 100)
-        const sev = riskFromTrust(newTrust)
-        pushAlert({ title: d.title, description: d.desc, severity: sev, nodeId: target.id })
-        applyTrustDelta(target.id, penalty, d.event)
+        console.error("API reconciliation failed, optimistic update kept:", err)
       }
     },
-    [applyTrustDelta, bumpPulse, nodes, pushAlert, setNodes, useMock]
+    [applyTrustDelta, bumpPulse, nodes, pushAlert, setNodes, syncEdgesFromNodes, useMock]
   )
 
   const resetNetwork = React.useCallback(async () => {
