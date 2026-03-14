@@ -5,3 +5,5 @@ python-dotenv
 pydantic
 certifi
 pyOpenSSL
+numpy
+scikit-learn

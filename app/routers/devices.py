@@ -16,6 +16,7 @@ from app.models.device_models import (
     NetworkMap,
     NetworkNode,
     OverviewStats,
+    SignalBreakdownOut,
 )
 from app.services.trust_engine import (
     compute_risk_level,
@@ -23,6 +24,7 @@ from app.services.trust_engine import (
     generate_protocol_usage,
     generate_security_explanation,
 )
+from app.services.ml_pipeline import pipeline
 
 logger = logging.getLogger("iot_monitor.devices")
 router = APIRouter()
@@ -45,7 +47,24 @@ async def _fetch_device(device_id: str) -> dict:
     return rows[0]
 
 
-# ---------------------------------------------------------------------------
+def _get_signal_breakdown(device_id: str) -> SignalBreakdownOut | None:
+    detail = pipeline.get_device_trust_detail(device_id)
+    if not detail:
+        return None
+    return SignalBreakdownOut(
+        ml_anomaly_score=detail["ml_anomaly_score"],
+        ml_penalty=detail["ml_penalty"],
+        drift_score=detail["drift_score"],
+        drift_penalty=detail["drift_penalty"],
+        drift_confirmed=detail["drift_confirmed"],
+        drift_confirmation_penalty=detail["drift_confirmation_penalty"],
+        policy_violations_total=detail["policy_violations_total"],
+        policy_high_confidence=detail["policy_high_confidence"],
+        policy_penalty=detail["policy_penalty"],
+        total_penalty=detail["total_penalty"],
+        baseline_update_allowed=detail["baseline_update_allowed"],
+    )
+
 
 @router.get(
     "/overview",
@@ -67,7 +86,9 @@ async def get_overview():
     online = offline = 0
     for d in devices:
         level = d.get("risk_level", "SAFE")
-        if level in counts:
+        if level == "COMPROMISED":
+            counts["HIGH"] += 1
+        elif level in counts:
             counts[level] += 1
         if d.get("status") == "online":
             online += 1
@@ -143,8 +164,12 @@ async def add_device(body: AddDeviceRequest):
 @router.get(
     "/devices/{device_id}",
     response_model=DeviceDetail,
-    summary="Device detail",
-    description="Returns full device info including computed open ports, protocol usage, and a plain-English security explanation.",
+    summary="Device detail with ML signal breakdown",
+    description=(
+        "Returns full device info including computed open ports, protocol usage, "
+        "a plain-English security explanation, and the ML signal breakdown showing "
+        "anomaly scores, drift penalties, policy violations, and total penalty."
+    ),
 )
 async def get_device(device_id: str):
     try:
@@ -160,14 +185,18 @@ async def get_device(device_id: str):
         open_ports=generate_open_ports(device["device_type"]),
         protocol_usage=generate_protocol_usage(device["device_type"]),
         security_explanation=generate_security_explanation(device),
+        signal_breakdown=_get_signal_breakdown(device_id),
     )
 
 
 @router.get(
     "/devices/{device_id}/explain",
     response_model=ExplainResponse,
-    summary="Security explanation",
-    description="Returns a plain-English explanation of why the device has its current risk level.",
+    summary="Security explanation with ML signals",
+    description=(
+        "Returns a plain-English explanation of why the device has its current risk level, "
+        "enriched with ML signal breakdown data."
+    ),
 )
 async def explain_device(device_id: str):
     try:
@@ -184,7 +213,30 @@ async def explain_device(device_id: str):
         risk_level=device["risk_level"],
         trust_score=device["trust_score"],
         explanation=generate_security_explanation(device),
+        signal_breakdown=_get_signal_breakdown(device_id),
     )
+
+
+@router.get(
+    "/trust-summary",
+    summary="ML trust engine summary",
+    description="Aggregate trust statistics from the ML pipeline — risk distribution, average trust, weakest device.",
+)
+async def trust_summary():
+    if not pipeline.is_trained:
+        return {"error": "ML pipeline not initialized"}
+    return pipeline.get_trust_summary()
+
+
+@router.get(
+    "/protection-summary",
+    summary="Baseline protection summary",
+    description="Reports on baseline poisoning protection — frozen, quarantined, and integrity stats.",
+)
+async def protection_summary():
+    if not pipeline.is_trained:
+        return {"error": "ML pipeline not initialized"}
+    return pipeline.get_protection_summary()
 
 
 @router.get(
@@ -219,20 +271,20 @@ async def get_network_map():
     ]
 
     gateway = next((d for d in devices if d["device_type"] == "gateway"), devices[0])
-    router  = next((d for d in devices if d["device_type"] == "router"), gateway)
-    hub     = next((d for d in devices if d["device_type"] == "hub"), router)
+    router_dev = next((d for d in devices if d["device_type"] == "router"), gateway)
+    hub = next((d for d in devices if d["device_type"] == "hub"), router_dev)
 
     PARENT_MAP = {
         "gateway":    None,
         "router":     gateway["id"],
-        "hub":        router["id"],
+        "hub":        router_dev["id"],
         "camera":     hub["id"],
         "sensor":     hub["id"],
         "smart_tv":   hub["id"],
-        "laptop":     router["id"],
-        "printer":    router["id"],
+        "laptop":     router_dev["id"],
+        "printer":    router_dev["id"],
         "thermostat": hub["id"],
-        "smartphone": router["id"],
+        "smartphone": router_dev["id"],
     }
 
     edges = []

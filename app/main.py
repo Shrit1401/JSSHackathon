@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import random
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -11,13 +10,8 @@ from fastapi.responses import JSONResponse
 
 from app.database.supabase_client import supabase
 from app.routers import alerts, devices, events, simulation
-from app.services.trust_engine import (
-    SEED_DEVICES,
-    compute_risk_level,
-    recover_trust_score,
-)
-
-  
+from app.services.trust_engine import SEED_DEVICES, compute_risk_level
+from app.services.ml_pipeline import pipeline
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,10 +19,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("iot_monitor")
 
-
-# ---------------------------------------------------------------------------
-# Startup helpers
-# ---------------------------------------------------------------------------
 
 async def seed_devices_if_empty() -> None:
     try:
@@ -50,77 +40,85 @@ async def seed_devices_if_empty() -> None:
         logger.exception("seed_devices_if_empty failed — continuing without seed")
 
 
-# ---------------------------------------------------------------------------
-# Background simulation
-# ---------------------------------------------------------------------------
+async def initialize_ml_pipeline() -> None:
+    try:
+        result = await asyncio.to_thread(
+            lambda: supabase.table("devices").select("*").execute()
+        )
+        devices_list = result.data or []
+        if not devices_list:
+            logger.warning("No devices found — ML pipeline cannot initialize")
+            return
+
+        await asyncio.to_thread(lambda: pipeline.initialize(devices_list))
+        logger.info("ML pipeline ready — %d devices mapped", len(pipeline.device_map))
+    except Exception:
+        logger.exception("ML pipeline initialization failed — falling back to simple mode")
+
 
 async def run_simulation_tick() -> None:
-    result = await asyncio.to_thread(
-        lambda: supabase.table("devices").select("*").execute()
-    )
-    devices_list = result.data or []
-    if not devices_list:
-        logger.warning("simulation_tick: no devices in DB, skipping")
+    if not pipeline.is_trained:
         return
 
-    device = random.choice(devices_list)
-    old_trust = device["trust_score"]
+    try:
+        tick_results = await asyncio.to_thread(pipeline.run_tick)
+    except Exception:
+        logger.exception("ML pipeline tick failed")
+        return
+
+    if not tick_results:
+        return
+
     now = datetime.now(timezone.utc).isoformat()
 
-    roll = random.random()
-    if roll < 0.85:
-        # Normal: small traffic fluctuation + gentle trust recovery
-        new_trust = recover_trust_score(old_trust)
-        new_traffic = max(0.0, round(device["traffic_rate"] + random.uniform(-2.0, 2.0), 2))
-        await asyncio.to_thread(
-            lambda: supabase.table("devices")
-            .update({
-                "trust_score": new_trust,
-                "risk_level": compute_risk_level(new_trust),
-                "traffic_rate": new_traffic,
-                "last_seen": now,
-            })
-            .eq("id", device["id"])
-            .execute()
-        )
-        logger.debug(
-            "tick   device=%-20s  trust=%d→%d  (normal)",
-            device["name"], old_trust, new_trust,
-        )
-    else:
-        # Minor anomaly: small trust dip, no alert
-        delta = random.randint(-5, -1)
-        new_trust = max(0, min(100, old_trust + delta))
-        new_traffic = max(0.0, round(device["traffic_rate"] + random.uniform(-1.0, 3.0), 2))
-        await asyncio.to_thread(
-            lambda: supabase.table("devices")
-            .update({
-                "trust_score": new_trust,
-                "risk_level": compute_risk_level(new_trust),
-                "traffic_rate": new_traffic,
-                "last_seen": now,
-            })
-            .eq("id", device["id"])
-            .execute()
-        )
-        await asyncio.to_thread(
-            lambda: supabase.table("events")
-            .insert({
-                "device_id": device["id"],
-                "event_type": "TRAFFIC_FLUCTUATION",
-                "description": f"[Auto] Minor traffic fluctuation on {device['name']}",
-                "timestamp": now,
-            })
-            .execute()
-        )
-        logger.debug(
-            "tick   device=%-20s  trust=%d→%d  (minor anomaly)",
-            device["name"], old_trust, new_trust,
-        )
+    for supa_id, data in tick_results.items():
+        try:
+            new_trust = data["trust_score"]
+            new_risk = data["risk_level"]
+            await asyncio.to_thread(
+                lambda sid=supa_id, t=new_trust, r=new_risk: supabase.table("devices")
+                .update({
+                    "trust_score": t,
+                    "risk_level": r,
+                    "last_seen": now,
+                })
+                .eq("id", sid)
+                .execute()
+            )
+        except Exception:
+            logger.exception("Failed to sync trust for device %s", supa_id)
+
+    try:
+        new_alerts = await asyncio.to_thread(pipeline.get_new_alerts)
+        for alert_data in new_alerts[:10]:
+            device_result = await asyncio.to_thread(
+                lambda did=alert_data["device_id"]: supabase.table("devices")
+                .select("name")
+                .eq("id", did)
+                .limit(1)
+                .execute()
+            )
+            device_name = ""
+            if device_result.data:
+                device_name = device_result.data[0].get("name", "")
+
+            payload = {
+                "device_id": alert_data["device_id"],
+                "device_name": device_name,
+                "alert_type": alert_data["alert_type"],
+                "severity": alert_data["severity"],
+                "message": alert_data["message"],
+                "timestamp": alert_data["timestamp"],
+            }
+            await asyncio.to_thread(
+                lambda p=payload: supabase.table("alerts").insert(p).execute()
+            )
+    except Exception:
+        logger.exception("Failed to sync ML alerts to Supabase")
 
 
 async def simulation_loop() -> None:
-    logger.info("Simulation loop started.")
+    logger.info("ML-driven simulation loop started.")
     while True:
         sleep_secs = random.uniform(5, 10)
         await asyncio.sleep(sleep_secs)
@@ -130,14 +128,11 @@ async def simulation_loop() -> None:
             logger.exception("simulation_loop tick failed — continuing")
 
 
-# ---------------------------------------------------------------------------
-# Lifespan
-# ---------------------------------------------------------------------------
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("━━━ IoT Trust Monitor starting up ━━━")
     await seed_devices_if_empty()
+    await initialize_ml_pipeline()
     task = asyncio.create_task(simulation_loop())
     yield
     logger.info("━━━ IoT Trust Monitor shutting down ━━━")
@@ -148,34 +143,28 @@ async def lifespan(app: FastAPI):
         pass
 
 
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
-
 app = FastAPI(
     title="IoT Trust Monitor",
     description=(
-        "Real-time IoT security monitoring backend.\n\n"
-        "Monitors network devices, calculates trust scores, detects suspicious "
-        "behaviour, generates alerts, and runs a background simulation engine."
+        "Real-time IoT security monitoring backend powered by ML.\n\n"
+        "Uses Isolation Forest anomaly detection, behavioral drift analysis, "
+        "policy evaluation, and multi-signal trust fusion to monitor network "
+        "devices, calculate trust scores, detect suspicious behaviour, and "
+        "generate alerts."
     ),
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
 
 app.add_middleware(
     CORSMiddleware,
-       allow_origins=["*"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-# ---------------------------------------------------------------------------
-# Global exception handler — never leak a 500 stack trace to the client
-# ---------------------------------------------------------------------------
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -186,20 +175,17 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# ---------------------------------------------------------------------------
-# Routers
-# ---------------------------------------------------------------------------
-
 app.include_router(devices.router, tags=["Devices"])
 app.include_router(alerts.router, tags=["Alerts"])
 app.include_router(events.router, tags=["Events"])
 app.include_router(simulation.router, tags=["Simulation"])
 
 
-# ---------------------------------------------------------------------------
-# Health check
-# ---------------------------------------------------------------------------
-
 @app.get("/health", tags=["Health"])
 async def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "ml_pipeline": pipeline.is_trained,
+        "devices_mapped": len(pipeline.device_map),
+        "active_attacks": len(pipeline.active_attacks),
+    }

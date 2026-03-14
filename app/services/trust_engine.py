@@ -1,10 +1,9 @@
 import random
 from datetime import datetime, timezone
+from typing import Optional
 
+from app.services.ml_pipeline import pipeline
 
-# ---------------------------------------------------------------------------
-# Risk computation
-# ---------------------------------------------------------------------------
 
 def compute_risk_level(score: int) -> str:
     if score >= 80:
@@ -17,9 +16,16 @@ def compute_risk_level(score: int) -> str:
         return "COMPROMISED"
 
 
-# ---------------------------------------------------------------------------
-# Trust score adjustment
-# ---------------------------------------------------------------------------
+def recover_trust_score(current: int) -> int:
+    if current >= 90:
+        return current
+    delta = random.randint(1, 3)
+    return min(100, current + delta)
+
+
+def compute_ml_trust(device_id: str) -> Optional[dict]:
+    return pipeline.get_device_trust_detail(device_id)
+
 
 EVENT_PENALTIES: dict[str, tuple[int, int]] = {
     "TRAFFIC_SPIKE": (-20, -10),
@@ -39,7 +45,6 @@ def adjust_trust_score(current: int, event_type: str) -> int:
 
 
 def apply_attack_penalty(current: int) -> int:
-    """Strong penalty for simulate-attack: drops 40-60 points."""
     delta = random.randint(-60, -40)
     return max(0, min(100, current + delta))
 
@@ -47,53 +52,52 @@ def apply_attack_penalty(current: int) -> int:
 NORMAL_EVENT_TYPES = ["ROUTINE_SCAN", "HEARTBEAT", "CONFIG_SYNC", "TRAFFIC_FLUCTUATION"]
 
 
-def recover_trust_score(current: int) -> int:
-    """Slowly recover trust toward 90 if not at max."""
-    if current >= 90:
-        return current
-    delta = random.randint(1, 3)
-    return min(100, current + delta)
-
-
-# ---------------------------------------------------------------------------
-# Security explanation
-# ---------------------------------------------------------------------------
-
 def generate_security_explanation(device: dict) -> str:
     risk = device.get("risk_level", "SAFE")
     score = device.get("trust_score", 100)
     rate = device.get("traffic_rate", 0.0)
     name = device.get("name", "Device")
 
+    detail = pipeline.get_device_trust_detail(device.get("id", ""))
+    signal_info = ""
+    if detail:
+        parts = []
+        if detail["ml_anomaly_score"] > 0.3:
+            parts.append(f"ML anomaly score {detail['ml_anomaly_score']:.2f} (penalty {detail['ml_penalty']:.1f})")
+        if detail["drift_score"] > 0:
+            parts.append(f"behavioral drift {detail['drift_score']:.2f} (penalty {detail['drift_penalty']:.1f})")
+        if detail["drift_confirmed"]:
+            parts.append("drift confirmed across multiple windows")
+        if detail["policy_violations_total"] > 0:
+            parts.append(f"{detail['policy_violations_total']} policy violations ({detail['policy_high_confidence']} high-confidence)")
+        if parts:
+            signal_info = " Signals: " + "; ".join(parts) + "."
+
     if risk == "SAFE":
         return (
             f"{name} is operating normally with a trust score of {score}/100. "
             f"Traffic rate is {rate:.1f} MB/s, within expected parameters. "
-            "No anomalies detected."
+            f"No anomalies detected.{signal_info}"
         )
     elif risk == "LOW":
         return (
             f"{name} shows minor deviations with a trust score of {score}/100. "
             f"Current traffic rate is {rate:.1f} MB/s. "
-            "Monitor for further changes but no immediate action required."
+            f"Monitor for further changes but no immediate action required.{signal_info}"
         )
     elif risk == "MEDIUM":
         return (
             f"{name} has a degraded trust score of {score}/100, indicating suspicious activity. "
             f"Traffic rate elevated at {rate:.1f} MB/s. "
-            "Recommend reviewing recent events and considering network isolation."
+            f"Recommend reviewing recent events and considering network isolation.{signal_info}"
         )
-    else:  # COMPROMISED
+    else:
         return (
             f"CRITICAL: {name} has a trust score of {score}/100, signaling a likely compromise. "
             f"Traffic rate is {rate:.1f} MB/s — significantly above baseline. "
-            "Immediate isolation and forensic analysis strongly recommended."
+            f"Immediate isolation and forensic analysis strongly recommended.{signal_info}"
         )
 
-
-# ---------------------------------------------------------------------------
-# Port and protocol generation
-# ---------------------------------------------------------------------------
 
 _PORTS_BY_TYPE: dict[str, list[str]] = {
     "camera": ["554/RTSP", "80/HTTP", "443/HTTPS", "8080/HTTP-ALT"],
@@ -132,10 +136,6 @@ _DEFAULT_PROTOCOLS = {"HTTPS": 60.0, "HTTP": 30.0, "Other": 10.0}
 def generate_protocol_usage(device_type: str) -> dict[str, float]:
     return _PROTOCOLS_BY_TYPE.get(device_type.lower(), _DEFAULT_PROTOCOLS)
 
-
-# ---------------------------------------------------------------------------
-# Alert logic
-# ---------------------------------------------------------------------------
 
 _ALERT_TYPES = {"TRAFFIC_SPIKE", "POLICY_VIOLATION", "NEW_DESTINATION", "BACKDOOR", "DATA_EXFILTRATION"}
 
@@ -191,10 +191,6 @@ def build_alert_payload(device: dict, event_type: str, new_trust: int) -> dict:
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-
-# ---------------------------------------------------------------------------
-# Seed devices
-# ---------------------------------------------------------------------------
 
 SEED_DEVICES: list[dict] = [
     {

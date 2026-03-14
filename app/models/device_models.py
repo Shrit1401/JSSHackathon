@@ -17,6 +17,20 @@ class DeviceSummary(BaseModel):
     last_seen: str
 
 
+class SignalBreakdownOut(BaseModel):
+    ml_anomaly_score: float = 0.0
+    ml_penalty: float = 0.0
+    drift_score: float = 0.0
+    drift_penalty: float = 0.0
+    drift_confirmed: bool = False
+    drift_confirmation_penalty: float = 0.0
+    policy_violations_total: int = 0
+    policy_high_confidence: int = 0
+    policy_penalty: float = 0.0
+    total_penalty: float = 0.0
+    baseline_update_allowed: bool = True
+
+
 class DeviceDetail(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -34,6 +48,7 @@ class DeviceDetail(BaseModel):
     open_ports: List[str]
     protocol_usage: Dict[str, float]
     security_explanation: str
+    signal_breakdown: Optional[SignalBreakdownOut] = None
 
 
 class AlertOut(BaseModel):
@@ -147,3 +162,4 @@ class ExplainResponse(BaseModel):
     risk_level: Literal["SAFE", "LOW", "MEDIUM", "HIGH", "COMPROMISED"]
     trust_score: int
     explanation: str
+    signal_breakdown: Optional[SignalBreakdownOut] = None
