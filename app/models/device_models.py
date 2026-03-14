@@ -265,7 +265,7 @@ class DeviceFullProfile(BaseModel):
     status: str
     last_seen: str
     created_at: Optional[str] = None
-    profile: DeviceProfileOut
+    profile: Optional[DeviceProfileOut] = None
     baseline: Optional[BaselineOut] = None
     drift: Optional[DriftStateOut] = None
     policy: Optional[PolicyStateOut] = None

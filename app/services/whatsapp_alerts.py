@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from datetime import datetime, timedelta, timezone
 
 from app.services import twilio_service
 from app.services.ml_pipeline import pipeline
@@ -34,8 +35,15 @@ def _format_evidence_card(
     message: str,
     detail: dict | None = None,
 ) -> str:
+    now = datetime.now(timezone.utc)
+    timestamp_utc = now.strftime("%Y-%m-%d %H:%M:%S UTC")
+    timestamp_ist = (now + timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d %I:%M:%S %p IST")
+
     lines = [
         "🚨 *COMPROMISE DETECTED* 🚨",
+        "",
+        f"⏰ Detected at: {timestamp_utc}",
+        f"⏰ Local (IST): {timestamp_ist}",
         "",
         f"Device: {device_name}",
         f"Type: {device_type}",

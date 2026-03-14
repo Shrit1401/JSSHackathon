@@ -272,6 +272,45 @@ async def trust_summary():
     return pipeline.get_trust_summary()
 
 
+@router.get("/trust/summary", include_in_schema=False)
+async def trust_summary_alias():
+    return await trust_summary()
+
+
+@router.get(
+    "/telemetry/devices",
+    summary="Per-device telemetry snapshot",
+    description="Returns a trust/risk/traffic snapshot for every device, sourced from the ML pipeline.",
+)
+async def telemetry_devices():
+    try:
+        devices = await _fetch_all_devices()
+    except Exception as exc:
+        logger.exception("GET /telemetry/devices — DB error")
+        raise HTTPException(status_code=502, detail="Database error") from exc
+
+    out = []
+    for d in devices:
+        entry = {
+            "id": d["id"],
+            "name": d["name"],
+            "device_type": d["device_type"],
+            "trust_score": d["trust_score"],
+            "risk_level": d["risk_level"],
+            "traffic_rate": d["traffic_rate"],
+            "status": d["status"],
+            "last_seen": d["last_seen"],
+        }
+        detail = pipeline.get_device_trust_detail(d["id"])
+        if detail:
+            entry["ml_anomaly_score"] = detail["ml_anomaly_score"]
+            entry["drift_score"] = detail["drift_score"]
+            entry["policy_violations"] = detail["policy_violations_total"]
+            entry["total_penalty"] = detail["total_penalty"]
+        out.append(entry)
+    return out
+
+
 @router.get(
     "/protection-summary",
     summary="Baseline protection summary",
