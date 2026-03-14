@@ -332,6 +332,7 @@ async def reset_network():
                 lambda d=did, tr=t: supabase.table("devices").update({
                     "trust_score": tr,
                     "risk_level": "SAFE",
+                    "traffic_rate": round(random.uniform(0.1, 1.5), 2),
                     "status": "online",
                     "last_seen": now,
                 }).eq("id", d).execute()
@@ -343,6 +344,16 @@ async def reset_network():
 
     results = await asyncio.gather(*[_reset_one(did) for did in device_ids])
     updated = sum(results)
+
+    try:
+        await asyncio.to_thread(
+            lambda: supabase.table("alerts").delete().neq("id", "").execute()
+        )
+        await asyncio.to_thread(
+            lambda: supabase.table("events").delete().neq("id", "").execute()
+        )
+    except Exception:
+        logger.exception("POST /reset-network — failed to clear alerts/events")
 
     try:
         all_devices = await asyncio.to_thread(

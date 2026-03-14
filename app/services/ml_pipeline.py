@@ -394,7 +394,25 @@ class MLPipeline:
     def reset(self) -> None:
         self.active_attacks.clear()
         self._last_alert_count = 0
-        self.__init__()
+        self.is_trained = False
+        self.device_map.clear()
+        self.reverse_map.clear()
+        self._all_devices.clear()
+
+        self.generator = TelemetryGenerator(seed=42)
+        self.feature_engine = FeatureEngine()
+        self.baseline_engine = BaselineEngine()
+        self.drift_detector = DriftDetector(self.baseline_engine)
+        self.policy_engine = PolicyEngine()
+        self.ml_detector = MLDetector()
+        self.trust_engine = TrustEngine(
+            self.drift_detector, self.policy_engine,
+            self.ml_detector, self.baseline_engine,
+        )
+        self.alert_manager = AlertManager(
+            self.drift_detector, self.policy_engine,
+            self.ml_detector, self.trust_engine,
+        )
 
 
 pipeline = MLPipeline()
