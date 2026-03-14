@@ -9,14 +9,24 @@ from app.database.supabase_client import supabase
 from app.models.device_models import (
     AddDeviceRequest,
     AddDeviceResponse,
+    BaselineOut,
+    DeviceAnalyticsOut,
     DeviceDetail,
     DeviceSummary,
+    DriftStateOut,
     ExplainResponse,
+    FeatureStatOut,
+    FeatureVectorOut,
+    MLAnomalyOut,
+    MLModelInfoOut,
     NetworkEdge,
     NetworkMap,
     NetworkNode,
     OverviewStats,
+    PolicyStateOut,
+    ProtectionStateOut,
     SignalBreakdownOut,
+    TrustHistoryOut,
 )
 from app.services.trust_engine import (
     compute_risk_level,
@@ -47,30 +57,64 @@ async def _fetch_device(device_id: str) -> dict:
     return rows[0]
 
 
-def _get_signal_breakdown(device_id: str) -> SignalBreakdownOut | None:
-    detail = pipeline.get_device_trust_detail(device_id)
-    if not detail:
+def _build_signal_breakdown(device_id: str) -> SignalBreakdownOut | None:
+    d = pipeline.get_device_trust_detail(device_id)
+    if not d:
         return None
-    return SignalBreakdownOut(
-        ml_anomaly_score=detail["ml_anomaly_score"],
-        ml_penalty=detail["ml_penalty"],
-        drift_score=detail["drift_score"],
-        drift_penalty=detail["drift_penalty"],
-        drift_confirmed=detail["drift_confirmed"],
-        drift_confirmation_penalty=detail["drift_confirmation_penalty"],
-        policy_violations_total=detail["policy_violations_total"],
-        policy_high_confidence=detail["policy_high_confidence"],
-        policy_penalty=detail["policy_penalty"],
-        total_penalty=detail["total_penalty"],
-        baseline_update_allowed=detail["baseline_update_allowed"],
+    return SignalBreakdownOut(**{k: d[k] for k in SignalBreakdownOut.model_fields if k in d})
+
+
+def _build_features(device_id: str) -> FeatureVectorOut | None:
+    d = pipeline.get_device_features(device_id)
+    return FeatureVectorOut(**d) if d else None
+
+
+def _build_baseline(device_id: str) -> BaselineOut | None:
+    d = pipeline.get_device_baseline(device_id)
+    if not d:
+        return None
+    stats = {
+        k: FeatureStatOut(**v) for k, v in d.get("feature_stats", {}).items()
+    }
+    return BaselineOut(
+        windows_learned=d["windows_learned"],
+        is_frozen=d["is_frozen"],
+        last_updated=d["last_updated"],
+        allowed_protocols=d["allowed_protocols"],
+        expected_destination_types=d["expected_destination_types"],
+        feature_stats=stats,
     )
+
+
+def _build_drift(device_id: str) -> DriftStateOut | None:
+    d = pipeline.get_device_drift(device_id)
+    return DriftStateOut(**d) if d else None
+
+
+def _build_policy(device_id: str) -> PolicyStateOut | None:
+    d = pipeline.get_device_policy(device_id)
+    return PolicyStateOut(**d) if d else None
+
+
+def _build_ml(device_id: str) -> MLAnomalyOut | None:
+    d = pipeline.get_device_ml_detail(device_id)
+    return MLAnomalyOut(**d) if d else None
+
+
+def _build_protection(device_id: str) -> ProtectionStateOut | None:
+    d = pipeline.get_device_protection(device_id)
+    return ProtectionStateOut(**d) if d else None
+
+
+def _build_trust_history(device_id: str) -> TrustHistoryOut | None:
+    d = pipeline.get_device_trust_history(device_id)
+    return TrustHistoryOut(**d) if d else None
 
 
 @router.get(
     "/overview",
     response_model=OverviewStats,
     summary="Dashboard overview counts",
-    description="Returns total device count broken down by risk level and online/offline status.",
 )
 async def get_overview():
     try:
@@ -110,7 +154,6 @@ async def get_overview():
     "/devices",
     response_model=List[DeviceSummary],
     summary="List all devices",
-    description="Returns every registered IoT device with its current trust score and risk level.",
 )
 async def list_devices():
     try:
@@ -126,10 +169,6 @@ async def list_devices():
     response_model=AddDeviceResponse,
     status_code=201,
     summary="Add a new device",
-    description=(
-        "Registers a new IoT device. trust_score defaults to 100, risk_level is computed automatically. "
-        "The device immediately appears in /devices, /network-map, and /overview."
-    ),
 )
 async def add_device(body: AddDeviceRequest):
     trust_score = max(0, min(100, body.trust_score))
@@ -164,11 +203,12 @@ async def add_device(body: AddDeviceRequest):
 @router.get(
     "/devices/{device_id}",
     response_model=DeviceDetail,
-    summary="Device detail with ML signal breakdown",
+    summary="Full device detail with all ML analytics",
     description=(
-        "Returns full device info including computed open ports, protocol usage, "
-        "a plain-English security explanation, and the ML signal breakdown showing "
-        "anomaly scores, drift penalties, policy violations, and total penalty."
+        "Returns everything: device info, open ports, protocol usage, security explanation, "
+        "plus full ML analytics — signal breakdown, live feature vector, baseline stats, "
+        "drift state, policy violations, ML anomaly scores with feature contributions, "
+        "baseline protection state, and trust score trajectory."
     ),
 )
 async def get_device(device_id: str):
@@ -185,18 +225,168 @@ async def get_device(device_id: str):
         open_ports=generate_open_ports(device["device_type"]),
         protocol_usage=generate_protocol_usage(device["device_type"]),
         security_explanation=generate_security_explanation(device),
-        signal_breakdown=_get_signal_breakdown(device_id),
+        signal_breakdown=_build_signal_breakdown(device_id),
+        features=_build_features(device_id),
+        drift=_build_drift(device_id),
+        policy=_build_policy(device_id),
+        ml_anomaly=_build_ml(device_id),
+        protection=_build_protection(device_id),
+        trust_history=_build_trust_history(device_id),
     )
+
+
+@router.get(
+    "/devices/{device_id}/analytics",
+    response_model=DeviceAnalyticsOut,
+    summary="Deep-dive ML analytics for a device",
+    description=(
+        "All ML engine data in one call: trust signals, live features, baseline, "
+        "drift detection, policy compliance, IsolationForest scores, protection state, trust history."
+    ),
+)
+async def device_analytics(device_id: str):
+    try:
+        await _fetch_device(device_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("GET /devices/%s/analytics — DB error", device_id)
+        raise HTTPException(status_code=502, detail="Database error") from exc
+
+    return DeviceAnalyticsOut(
+        trust_detail=_build_signal_breakdown(device_id),
+        features=_build_features(device_id),
+        baseline=_build_baseline(device_id),
+        drift=_build_drift(device_id),
+        policy=_build_policy(device_id),
+        ml_anomaly=_build_ml(device_id),
+        protection=_build_protection(device_id),
+        trust_history=_build_trust_history(device_id),
+    )
+
+
+@router.get(
+    "/devices/{device_id}/features",
+    response_model=FeatureVectorOut,
+    summary="Live telemetry features",
+    description=(
+        "The 12 extracted features from the latest telemetry window: "
+        "packet rate, session duration, bytes sent/received, traffic volume, "
+        "destination entropy, protocol entropy, external connection ratio, etc."
+    ),
+)
+async def device_features(device_id: str):
+    result = _build_features(device_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="No feature data available for this device")
+    return result
+
+
+@router.get(
+    "/devices/{device_id}/baseline",
+    response_model=BaselineOut,
+    summary="Learned baseline profile",
+    description=(
+        "Statistical baseline for this device — mean, std, min, max for all 11 numeric features. "
+        "This is what 'normal' looks like. Shows allowed protocols, expected destinations, "
+        "and whether the baseline is frozen."
+    ),
+)
+async def device_baseline(device_id: str):
+    result = _build_baseline(device_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="No baseline data available for this device")
+    return result
+
+
+@router.get(
+    "/devices/{device_id}/drift",
+    response_model=DriftStateOut,
+    summary="Behavioral drift detection state",
+    description=(
+        "Is the device drifting from baseline? Shows severity, drift score, "
+        "which features are drifting with z-scores, consecutive drift windows, "
+        "confirmation status, and historical drift data."
+    ),
+)
+async def device_drift(device_id: str):
+    result = _build_drift(device_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="No drift data available for this device")
+    return result
+
+
+@router.get(
+    "/devices/{device_id}/policy",
+    response_model=PolicyStateOut,
+    summary="Policy compliance state",
+    description=(
+        "Is the device policy-compliant? Shows total violations, violation rate, "
+        "violations by type (protocol blacklist, destination restriction, traffic ceiling, etc.), "
+        "and the 10 most recent violation details with evidence."
+    ),
+)
+async def device_policy(device_id: str):
+    result = _build_policy(device_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="No policy data available for this device")
+    return result
+
+
+@router.get(
+    "/devices/{device_id}/ml",
+    response_model=MLAnomalyOut,
+    summary="ML anomaly detection detail",
+    description=(
+        "IsolationForest anomaly scores: current score, raw decision function score, "
+        "is_anomalous flag, feature contributions showing which features are driving "
+        "the anomaly, score history across all windows."
+    ),
+)
+async def device_ml(device_id: str):
+    result = _build_ml(device_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="No ML data available for this device")
+    return result
+
+
+@router.get(
+    "/devices/{device_id}/protection",
+    response_model=ProtectionStateOut,
+    summary="Baseline protection state",
+    description=(
+        "Anti-poisoning protection: is the baseline frozen or quarantined? "
+        "Shows consecutive denials, poisoning attempts blocked, baseline integrity score, "
+        "and gate decision history."
+    ),
+)
+async def device_protection(device_id: str):
+    result = _build_protection(device_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="No protection data available for this device")
+    return result
+
+
+@router.get(
+    "/devices/{device_id}/trust-history",
+    response_model=TrustHistoryOut,
+    summary="Trust score trajectory",
+    description=(
+        "Trust score over time: current, lowest, highest, average, "
+        "and the full trajectory with risk level at each window."
+    ),
+)
+async def device_trust_history(device_id: str):
+    result = _build_trust_history(device_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="No trust history available for this device")
+    return result
 
 
 @router.get(
     "/devices/{device_id}/explain",
     response_model=ExplainResponse,
     summary="Security explanation with ML signals",
-    description=(
-        "Returns a plain-English explanation of why the device has its current risk level, "
-        "enriched with ML signal breakdown data."
-    ),
 )
 async def explain_device(device_id: str):
     try:
@@ -213,14 +403,13 @@ async def explain_device(device_id: str):
         risk_level=device["risk_level"],
         trust_score=device["trust_score"],
         explanation=generate_security_explanation(device),
-        signal_breakdown=_get_signal_breakdown(device_id),
+        signal_breakdown=_build_signal_breakdown(device_id),
     )
 
 
 @router.get(
     "/trust-summary",
     summary="ML trust engine summary",
-    description="Aggregate trust statistics from the ML pipeline — risk distribution, average trust, weakest device.",
 )
 async def trust_summary():
     if not pipeline.is_trained:
@@ -231,7 +420,6 @@ async def trust_summary():
 @router.get(
     "/protection-summary",
     summary="Baseline protection summary",
-    description="Reports on baseline poisoning protection — frozen, quarantined, and integrity stats.",
 )
 async def protection_summary():
     if not pipeline.is_trained:
@@ -240,13 +428,27 @@ async def protection_summary():
 
 
 @router.get(
+    "/ml-model",
+    response_model=MLModelInfoOut,
+    summary="ML model info",
+    description=(
+        "Details about the IsolationForest model: hyperparameters, training data, "
+        "feature list, total scored, anomaly detection rate."
+    ),
+)
+async def ml_model_info():
+    if not pipeline.is_trained:
+        raise HTTPException(status_code=503, detail="ML pipeline not initialized")
+    info = pipeline.get_ml_model_info()
+    if not info:
+        raise HTTPException(status_code=503, detail="ML model not available")
+    return MLModelInfoOut(**info)
+
+
+@router.get(
     "/network-map",
     response_model=NetworkMap,
     summary="Network topology map",
-    description=(
-        "Returns nodes (devices) and edges for rendering a network graph. "
-        "All non-gateway devices connect to the primary gateway/router node."
-    ),
 )
 async def get_network_map():
     try:
