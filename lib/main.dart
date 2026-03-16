@@ -8,7 +8,7 @@ import 'providers/devices_provider.dart';
 import 'providers/alerts_provider.dart';
 import 'providers/assistant_provider.dart';
 import 'providers/network_map_provider.dart';
-import 'screens/main_shell.dart';
+import 'screens/splash_screen.dart';
 import 'services/notification_service.dart';
 
 void main() async {
@@ -16,10 +16,12 @@ void main() async {
   runApp(const IoTTrustMonitorApp());
   // Init notifications after app is running so we never block the first frame (fixes white screen on web/emulator).
   if (!kIsWeb) {
-    NotificationService().initialize().catchError((e, _) {
+    NotificationService()
+        .initialize()
+        .then((_) => NotificationService().startHealthMonitor())
+        .catchError((e, _) {
       if (kDebugMode) debugPrint('NotificationService init: $e');
     });
-    NotificationService().startHealthMonitor();
   }
 }
 
@@ -46,7 +48,7 @@ class IoTTrustMonitorApp extends StatelessWidget {
             theme: isAllSecure ? AppTheme.dark : AppTheme.danger,
             debugShowCheckedModeBanner: false,
             navigatorKey: AppRouter.navigatorKey,
-            home: const MainShell(),
+            home: const SplashScreen(),
           );
         },
       ),

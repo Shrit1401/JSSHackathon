@@ -1,7 +1,8 @@
 class AppConfig {
   /// Backend API base URL (deployed Sentinel on Render).
   static const String baseUrl = 'https://jsshackathon.onrender.com';
-  static const int refreshIntervalSeconds = 30;
+  /// Polling interval for alerts/devices/overview. Shorter = faster to see new alerts after simulate-attack.
+  static const int refreshIntervalSeconds = 5;
   static bool useMockData = false;
 
   /// Hack Club AI — for assistant chat. Use dart-define or env in production.

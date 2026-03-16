@@ -55,7 +55,11 @@ class _MainShellState extends State<MainShell> {
       ),
       bottomNavigationBar: _CyberNavBar(
         currentIndex: _currentIndex,
-        onTap: (i) => setState(() => _currentIndex = i),
+        onTap: (i) {
+        setState(() => _currentIndex = i);
+        // Refresh alerts immediately when user opens Alerts tab so new attacks show right away
+        if (i == 2) context.read<AlertsProvider>().load();
+      },
       ),
     );
   }
